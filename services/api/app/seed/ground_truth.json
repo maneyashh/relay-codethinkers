@@ -1,0 +1,1023 @@
+{
+  "_meta": {
+    "as_of": "2026-11-07",
+    "project": "Meridian Payments Platform (meridian-payments)",
+    "purpose": "Oracle for evaluating the pipeline: every quote below is a verbatim substring of the source body (asserted at generation time).",
+    "body_composition": "source_items.body = text for Slack messages, Jira comments, PR reviews/comments and commits; '{title}\\n\\n{description}' for Jira issues, PRs and GitHub issues.",
+    "external_id_scheme": {
+      "slack": "{channel_id}:{ts}",
+      "jira": "PAY-142 | PAY-142#c{comment_id}",
+      "github_pr": "PR#318 | PR#318#review-{id} | PR#318#comment-{id}",
+      "github_issue": "ISSUE#389",
+      "github_commit": "COMMIT#{sha}"
+    },
+    "counts": {
+      "hard_contradictions": 3,
+      "temporal_supersessions": 2,
+      "missing_info_gaps": 4,
+      "restricted_evidence_nodes": 2,
+      "healthy_decisions": 3,
+      "decisions": 12
+    },
+    "notes": [
+      "single_source / stale-by-age doubts are legitimate bonus signals and are not listed here.",
+      "Only 2 messages in #exec-finance carry decision-relevant content; the rest is deliberate noise."
+    ]
+  },
+  "decisions": [
+    {
+      "key": "D1",
+      "title": "Rate limiting backend",
+      "category": "hard_contradiction",
+      "expected_doubts": [
+        "C1"
+      ],
+      "evidence": [
+        {
+          "role": "intent_a",
+          "quote": "moving API rate limiting to Redis with a sliding-window counter",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYENG:1776159000.000128",
+            "scope": "#payments-eng",
+            "author": "maya.okafor",
+            "authored_at": "2026-04-14T09:30:00Z"
+          }
+        },
+        {
+          "role": "spec_context",
+          "quote": "in-memory token bucket in the gateway middleware",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-142",
+            "scope": "PAY",
+            "author": "jira-priya",
+            "authored_at": "2026-04-22T11:30:00Z"
+          }
+        },
+        {
+          "role": "implementation_b",
+          "quote": "Redis is NOT used in this PR.",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#318",
+            "scope": "meridian/payments-service",
+            "author": "maya-okafor",
+            "authored_at": "2026-05-04T10:00:00Z"
+          }
+        },
+        {
+          "role": "reviewer_question",
+          "quote": "I thought we decided on Redis in #payments-eng though?",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#318#review-5004",
+            "scope": "meridian/payments-service",
+            "author": "li-wei",
+            "authored_at": "2026-05-08T14:00:00Z"
+          }
+        },
+        {
+          "role": "author_hint",
+          "quote": "Postgres for now, Redis later.",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#318#comment-6003",
+            "scope": "meridian/payments-service",
+            "author": "maya-okafor",
+            "authored_at": "2026-05-08T14:20:00Z"
+          }
+        },
+        {
+          "role": "restricted_rationale",
+          "quote": "declined for FY26",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C02EXECFIN:1777567500.000107",
+            "scope": "#exec-finance",
+            "author": "noah.brandt",
+            "authored_at": "2026-04-30T16:45:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "D2",
+      "title": "Webhook retry policy",
+      "category": "hard_contradiction",
+      "expected_doubts": [
+        "C2"
+      ],
+      "evidence": [
+        {
+          "role": "spec_context",
+          "quote": "retry up to 5 times with exponential backoff starting at 1 second",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-157",
+            "scope": "PAY",
+            "author": "jira-priya",
+            "authored_at": "2026-05-12T10:00:00Z"
+          }
+        },
+        {
+          "role": "implementation_a",
+          "quote": "Dropping to 3 attempts with 2s / 10s / 60s backoff.",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#341",
+            "scope": "meridian/payments-service",
+            "author": "tomas-rivera",
+            "authored_at": "2026-06-01T10:00:00Z"
+          }
+        },
+        {
+          "role": "stale_belief_b",
+          "quote": "webhooks retry 5 times with exponential backoff",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYENG:1789558200.000219",
+            "scope": "#payments-eng",
+            "author": "sasha.kim",
+            "authored_at": "2026-09-16T11:30:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "D3",
+      "title": "Service-to-service authentication (PCI)",
+      "category": "hard_contradiction",
+      "expected_doubts": [
+        "C3"
+      ],
+      "evidence": [
+        {
+          "role": "requirement",
+          "quote": "all service-to-service calls use mTLS through the service mesh",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-171",
+            "scope": "PAY",
+            "author": "jira-rachel",
+            "authored_at": "2026-05-20T13:00:00Z"
+          }
+        },
+        {
+          "role": "deadline",
+          "quote": "Must be in place before the Q4 audit on Nov 30.",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-171",
+            "scope": "PAY",
+            "author": "jira-rachel",
+            "authored_at": "2026-05-20T13:00:00Z"
+          }
+        },
+        {
+          "role": "closure_claim",
+          "quote": "Mesh mTLS is enabled for the ledger and vault namespaces.",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-171#c10006",
+            "scope": "PAY",
+            "author": "jira-sasha",
+            "authored_at": "2026-06-19T09:00:00Z"
+          }
+        },
+        {
+          "role": "claim_a",
+          "quote": "everything between payments-service and ledger-service is mTLS through the mesh now",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYENG:1781800200.000170",
+            "scope": "#payments-eng",
+            "author": "sasha.kim",
+            "authored_at": "2026-06-18T16:30:00Z"
+          }
+        },
+        {
+          "role": "reality_b",
+          "quote": "The mesh sidecar is not injected in the `ledger` namespace yet",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#356",
+            "scope": "meridian/payments-service",
+            "author": "li-wei",
+            "authored_at": "2026-07-08T10:00:00Z"
+          }
+        },
+        {
+          "role": "corroboration",
+          "quote": "Approved as a stopgap until the mesh is enabled for ledger.",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#356#review-5009",
+            "scope": "meridian/payments-service",
+            "author": "maya-okafor",
+            "authored_at": "2026-07-13T11:00:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "D4",
+      "title": "Deploy cadence",
+      "category": "temporal_supersession",
+      "expected_doubts": [
+        "T1"
+      ],
+      "evidence": [
+        {
+          "role": "superseded",
+          "quote": "payments-service deploys to prod on Thursdays only",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYENG:1773309600.000121",
+            "scope": "#payments-eng",
+            "author": "maya.okafor",
+            "authored_at": "2026-03-12T10:00:00Z"
+          }
+        },
+        {
+          "role": "superseding",
+          "quote": "we've retired the Thursday release train",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYENG:1787047500.000205",
+            "scope": "#payments-eng",
+            "author": "rachel.lindqvist",
+            "authored_at": "2026-08-18T10:05:00Z"
+          }
+        },
+        {
+          "role": "corroboration",
+          "quote": "Retire the Thursday release train.",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-205",
+            "scope": "PAY",
+            "author": "jira-rachel",
+            "authored_at": "2026-08-14T09:00:00Z"
+          }
+        },
+        {
+          "role": "corroboration",
+          "quote": "Merges to main now deploy to prod automatically",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#384",
+            "scope": "meridian/payments-service",
+            "author": "sasha-kim",
+            "authored_at": "2026-08-14T15:00:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "D5",
+      "title": "Disaster recovery strategy",
+      "category": "temporal_supersession",
+      "expected_doubts": [
+        "T2"
+      ],
+      "evidence": [
+        {
+          "role": "superseded",
+          "quote": "warm standby in us-east-1 is up with streaming replication",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYINC:1782382800.000100",
+            "scope": "#payments-incidents",
+            "author": "sasha.kim",
+            "authored_at": "2026-06-25T10:20:00Z"
+          }
+        },
+        {
+          "role": "superseded_corroboration",
+          "quote": "Standby is live and the failover test passed (RTO 12 min).",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-176#c10007",
+            "scope": "PAY",
+            "author": "jira-sasha",
+            "authored_at": "2026-06-24T15:00:00Z"
+          }
+        },
+        {
+          "role": "superseding",
+          "quote": "the us-east-1 standby was decommissioned on Sep 30",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYINC:1790932200.000121",
+            "scope": "#payments-incidents",
+            "author": "sasha.kim",
+            "authored_at": "2026-10-02T09:10:00Z"
+          }
+        },
+        {
+          "role": "corroboration",
+          "quote": "DR is now backup/restore only.",
+          "source_ref": {
+            "kind": "github_commit",
+            "external_id": "COMMIT#d08b66affe257b64f06f4521785511fafa80066d",
+            "scope": "meridian/payments-service",
+            "author": "sasha-kim",
+            "authored_at": "2026-09-30T16:05:00Z"
+          }
+        },
+        {
+          "role": "restricted_rationale",
+          "quote": "costs $6.2k/mo",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C02EXECFIN:1788866100.000128",
+            "scope": "#exec-finance",
+            "author": "noah.brandt",
+            "authored_at": "2026-09-08T11:15:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "D6",
+      "title": "Header-based API versioning",
+      "category": "missing_info",
+      "expected_doubts": [
+        "G1"
+      ],
+      "evidence": [
+        {
+          "role": "decision",
+          "quote": "We're going with header-based API versioning (Meridian-Version: 2026-06-01) instead of /v1 and /v2 paths.",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYENG:1779880500.000149",
+            "scope": "#payments-eng",
+            "author": "tomas.rivera",
+            "authored_at": "2026-05-27T11:15:00Z"
+          }
+        },
+        {
+          "role": "implementation",
+          "quote": "Adds the date-based `Meridian-Version` request header.",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#331",
+            "scope": "meridian/payments-service",
+            "author": "tomas-rivera",
+            "authored_at": "2026-05-28T10:00:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "D7",
+      "title": "Nightly ledger reconciliation job",
+      "category": "ownership_gap",
+      "expected_doubts": [
+        "G2"
+      ],
+      "evidence": [
+        {
+          "role": "owner_claim",
+          "quote": "Owner: @tomas-rivera",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#326",
+            "scope": "meridian/payments-service",
+            "author": "tomas-rivera",
+            "authored_at": "2026-05-14T10:00:00Z"
+          }
+        },
+        {
+          "role": "tribal_knowledge",
+          "quote": "The runbook lives in my head for now, will write it up.",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-163#c10005",
+            "scope": "PAY",
+            "author": "jira-tomas",
+            "authored_at": "2026-05-19T16:20:00Z"
+          }
+        },
+        {
+          "role": "tribal_knowledge",
+          "quote": "mismatches under $5 are almost always FX rounding",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYENG:1786124700.000198",
+            "scope": "#payments-eng",
+            "author": "tomas.rivera",
+            "authored_at": "2026-08-07T17:45:00Z"
+          }
+        },
+        {
+          "role": "acknowledged_gap",
+          "quote": "nobody can explain end to end what they do",
+          "source_ref": {
+            "kind": "github_issue",
+            "external_id": "ISSUE#389",
+            "scope": "meridian/payments-service",
+            "author": "maya-okafor",
+            "authored_at": "2026-09-01T10:00:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "D8",
+      "title": "Ledger snapshot export CronJob",
+      "category": "undocumented",
+      "expected_doubts": [
+        "G3"
+      ],
+      "evidence": [
+        {
+          "role": "entire_documentation",
+          "quote": "See Finance.",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#309",
+            "scope": "meridian/payments-service",
+            "author": "tomas-rivera",
+            "authored_at": "2026-04-06T13:00:00Z"
+          }
+        },
+        {
+          "role": "unanswered_question",
+          "quote": "What does Finance do with this file, and where does it get written?",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#309#comment-6001",
+            "scope": "meridian/payments-service",
+            "author": "maya-okafor",
+            "authored_at": "2026-04-07T10:50:00Z"
+          }
+        },
+        {
+          "role": "admission",
+          "quote": "Not totally sure on the details, Noah's team asked for it.",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#309#comment-6002",
+            "scope": "meridian/payments-service",
+            "author": "tomas-rivera",
+            "authored_at": "2026-04-07T14:15:00Z"
+          }
+        },
+        {
+          "role": "admission",
+          "quote": "Not sure where the file actually lands, maybe an S3 bucket?",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYINC:1782789000.000107",
+            "scope": "#payments-incidents",
+            "author": "sasha.kim",
+            "authored_at": "2026-06-30T03:10:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "D9",
+      "title": "Webhook signing secret rotation",
+      "category": "unanswered_question",
+      "expected_doubts": [
+        "G4"
+      ],
+      "evidence": [
+        {
+          "role": "deadline",
+          "quote": "Next rotation is due 2026-12-01.",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-212",
+            "scope": "PAY",
+            "author": "jira-priya",
+            "authored_at": "2026-10-05T10:00:00Z"
+          }
+        },
+        {
+          "role": "no_owner",
+          "quote": "Owner: TBD",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-212",
+            "scope": "PAY",
+            "author": "jira-priya",
+            "authored_at": "2026-10-05T10:00:00Z"
+          }
+        },
+        {
+          "role": "missing_procedure",
+          "quote": "Rotation procedure: TODO, will write it up in the runbook.",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#362",
+            "scope": "meridian/payments-service",
+            "author": "tomas-rivera",
+            "authored_at": "2026-07-28T11:00:00Z"
+          }
+        },
+        {
+          "role": "unanswered_question",
+          "quote": "I can't find a runbook anywhere.",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYENG:1792592400.000233",
+            "scope": "#payments-eng",
+            "author": "li.wei",
+            "authored_at": "2026-10-21T14:20:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "D10",
+      "title": "Idempotency-Key required on charges and refunds",
+      "category": "healthy",
+      "expected_doubts": [],
+      "evidence": [
+        {
+          "role": "decision",
+          "quote": "every POST to /v1/charges and /v1/refunds must carry an Idempotency-Key header",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYENG:1772615520.000100",
+            "scope": "#payments-eng",
+            "author": "maya.okafor",
+            "authored_at": "2026-03-04T09:12:00Z"
+          }
+        },
+        {
+          "role": "corroboration",
+          "quote": "Keys are stored for 24 hours",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-118",
+            "scope": "PAY",
+            "author": "jira-li",
+            "authored_at": "2026-03-04T10:05:00Z"
+          }
+        },
+        {
+          "role": "corroboration",
+          "quote": "Keys are persisted in `idempotency_keys` with a 24h TTL",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#290",
+            "scope": "meridian/payments-service",
+            "author": "li-wei",
+            "authored_at": "2026-03-10T11:00:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "D11",
+      "title": "Money as integer minor units",
+      "category": "healthy",
+      "expected_doubts": [],
+      "evidence": [
+        {
+          "role": "decision",
+          "quote": "all amounts are integers in minor units (cents)",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYENG:1773070800.000114",
+            "scope": "#payments-eng",
+            "author": "tomas.rivera",
+            "authored_at": "2026-03-09T15:40:00Z"
+          }
+        },
+        {
+          "role": "corroboration",
+          "quote": "All monetary amounts in API requests, responses and the ledger are integers in minor units",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-122",
+            "scope": "PAY",
+            "author": "jira-tomas",
+            "authored_at": "2026-03-09T16:10:00Z"
+          }
+        },
+        {
+          "role": "corroboration",
+          "quote": "`amount` (decimal string) becomes `amount_minor` (integer)",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#297",
+            "scope": "meridian/payments-service",
+            "author": "tomas-rivera",
+            "authored_at": "2026-03-20T10:00:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "D12",
+      "title": "Ledger v2 dual-write behind a feature flag",
+      "category": "healthy",
+      "expected_doubts": [],
+      "evidence": [
+        {
+          "role": "decision",
+          "quote": "Ledger v2 writes ship dark behind the ledger_v2_writes flag",
+          "source_ref": {
+            "kind": "slack",
+            "external_id": "C01PAYENG:1781096400.000163",
+            "scope": "#payments-eng",
+            "author": "maya.okafor",
+            "authored_at": "2026-06-10T13:00:00Z"
+          }
+        },
+        {
+          "role": "corroboration",
+          "quote": "Rollback is flipping the flag off",
+          "source_ref": {
+            "kind": "jira",
+            "external_id": "PAY-188",
+            "scope": "PAY",
+            "author": "jira-maya",
+            "authored_at": "2026-06-08T10:30:00Z"
+          }
+        },
+        {
+          "role": "corroboration",
+          "quote": "Rolling back is just turning the flag off, no migration needed.",
+          "source_ref": {
+            "kind": "github_pr",
+            "external_id": "PR#352",
+            "scope": "meridian/payments-service",
+            "author": "maya-okafor",
+            "authored_at": "2026-06-12T10:00:00Z"
+          }
+        }
+      ]
+    }
+  ],
+  "expected_doubts": [
+    {
+      "id": "C1",
+      "kind": "contradiction",
+      "judgement": "direct",
+      "severity": 4,
+      "decision": "D1",
+      "suggested_resolution": "needs_human",
+      "title": "Rate limiting: Redis (Slack) vs in-memory (Jira) vs Postgres (merged PR)",
+      "sides": {
+        "a": [
+          {
+            "role": "claims Redis",
+            "quote": "moving API rate limiting to Redis with a sliding-window counter",
+            "source_ref": {
+              "kind": "slack",
+              "external_id": "C01PAYENG:1776159000.000128",
+              "scope": "#payments-eng",
+              "author": "maya.okafor",
+              "authored_at": "2026-04-14T09:30:00Z"
+            }
+          }
+        ],
+        "b": [
+          {
+            "role": "what actually shipped",
+            "quote": "Redis is NOT used in this PR.",
+            "source_ref": {
+              "kind": "github_pr",
+              "external_id": "PR#318",
+              "scope": "meridian/payments-service",
+              "author": "maya-okafor",
+              "authored_at": "2026-05-04T10:00:00Z"
+            }
+          }
+        ],
+        "context": [
+          {
+            "role": "stale spec",
+            "quote": "in-memory token bucket in the gateway middleware",
+            "source_ref": {
+              "kind": "jira",
+              "external_id": "PAY-142",
+              "scope": "PAY",
+              "author": "jira-priya",
+              "authored_at": "2026-04-22T11:30:00Z"
+            }
+          },
+          {
+            "role": "ambiguous intent",
+            "quote": "Postgres for now, Redis later.",
+            "source_ref": {
+              "kind": "github_pr",
+              "external_id": "PR#318#comment-6003",
+              "scope": "meridian/payments-service",
+              "author": "maya-okafor",
+              "authored_at": "2026-05-08T14:20:00Z"
+            }
+          }
+        ]
+      },
+      "why_hard": "Three sources, three answers. The merged PR is newest, but 'Redis later' leaves intent open. Needs the dev to say whether Redis is still planned. The WHY is in locked #exec-finance evidence."
+    },
+    {
+      "id": "C2",
+      "kind": "contradiction",
+      "judgement": "direct",
+      "severity": 4,
+      "decision": "D2",
+      "suggested_resolution": "needs_human",
+      "title": "Webhook retries: 3 attempts (code) vs 5 attempts (spec + runbook)",
+      "sides": {
+        "a": [
+          {
+            "role": "merged code",
+            "quote": "Dropping to 3 attempts with 2s / 10s / 60s backoff.",
+            "source_ref": {
+              "kind": "github_pr",
+              "external_id": "PR#341",
+              "scope": "meridian/payments-service",
+              "author": "tomas-rivera",
+              "authored_at": "2026-06-01T10:00:00Z"
+            }
+          }
+        ],
+        "b": [
+          {
+            "role": "newest message, but it cites the stale ticket",
+            "quote": "webhooks retry 5 times with exponential backoff",
+            "source_ref": {
+              "kind": "slack",
+              "external_id": "C01PAYENG:1789558200.000219",
+              "scope": "#payments-eng",
+              "author": "sasha.kim",
+              "authored_at": "2026-09-16T11:30:00Z"
+            }
+          }
+        ],
+        "context": [
+          {
+            "role": "original spec",
+            "quote": "retry up to 5 times with exponential backoff starting at 1 second",
+            "source_ref": {
+              "kind": "jira",
+              "external_id": "PAY-157",
+              "scope": "PAY",
+              "author": "jira-priya",
+              "authored_at": "2026-05-12T10:00:00Z"
+            }
+          }
+        ]
+      },
+      "why_hard": "Trap for 'newest wins': the latest statement (Sep 16) is the WRONG one because it cites PAY-157, which predates the Jun 2 change."
+    },
+    {
+      "id": "C3",
+      "kind": "contradiction",
+      "judgement": "direct",
+      "severity": 5,
+      "decision": "D3",
+      "suggested_resolution": "needs_human",
+      "title": "PCI: 'mTLS everywhere' (Jira + Slack) vs plain HTTP + JWT stopgap (PR #356)",
+      "sides": {
+        "a": [
+          {
+            "role": "claims mTLS",
+            "quote": "everything between payments-service and ledger-service is mTLS through the mesh now",
+            "source_ref": {
+              "kind": "slack",
+              "external_id": "C01PAYENG:1781800200.000170",
+              "scope": "#payments-eng",
+              "author": "sasha.kim",
+              "authored_at": "2026-06-18T16:30:00Z"
+            }
+          },
+          {
+            "role": "ticket closed on that basis",
+            "quote": "Mesh mTLS is enabled for the ledger and vault namespaces.",
+            "source_ref": {
+              "kind": "jira",
+              "external_id": "PAY-171#c10006",
+              "scope": "PAY",
+              "author": "jira-sasha",
+              "authored_at": "2026-06-19T09:00:00Z"
+            }
+          }
+        ],
+        "b": [
+          {
+            "role": "says the opposite, 26 days later",
+            "quote": "The mesh sidecar is not injected in the `ledger` namespace yet",
+            "source_ref": {
+              "kind": "github_pr",
+              "external_id": "PR#356",
+              "scope": "meridian/payments-service",
+              "author": "li-wei",
+              "authored_at": "2026-07-08T10:00:00Z"
+            }
+          }
+        ],
+        "context": [
+          {
+            "role": "tech lead agrees mesh is off",
+            "quote": "Approved as a stopgap until the mesh is enabled for ledger.",
+            "source_ref": {
+              "kind": "github_pr",
+              "external_id": "PR#356#review-5009",
+              "scope": "meridian/payments-service",
+              "author": "maya-okafor",
+              "authored_at": "2026-07-13T11:00:00Z"
+            }
+          },
+          {
+            "role": "compliance deadline",
+            "quote": "Must be in place before the Q4 audit on Nov 30.",
+            "source_ref": {
+              "kind": "jira",
+              "external_id": "PAY-171",
+              "scope": "PAY",
+              "author": "jira-rachel",
+              "authored_at": "2026-05-20T13:00:00Z"
+            }
+          }
+        ]
+      },
+      "why_hard": "No evidence after Jul 14 says the mesh was ever enabled for ledger, yet the ticket is Done. Compliance audit Nov 30 makes this the most urgent card."
+    },
+    {
+      "id": "T1",
+      "kind": "stale",
+      "judgement": "temporal_supersession",
+      "severity": 2,
+      "decision": "D4",
+      "suggested_resolution": "pick_b",
+      "title": "Deploys: Thursday release train (Mar) vs continuous deploy (Aug)",
+      "sides": {
+        "a": [
+          {
+            "role": "old policy",
+            "quote": "payments-service deploys to prod on Thursdays only",
+            "source_ref": {
+              "kind": "slack",
+              "external_id": "C01PAYENG:1773309600.000121",
+              "scope": "#payments-eng",
+              "author": "maya.okafor",
+              "authored_at": "2026-03-12T10:00:00Z"
+            }
+          }
+        ],
+        "b": [
+          {
+            "role": "explicit supersession by the eng manager",
+            "quote": "we've retired the Thursday release train",
+            "source_ref": {
+              "kind": "slack",
+              "external_id": "C01PAYENG:1787047500.000205",
+              "scope": "#payments-eng",
+              "author": "rachel.lindqvist",
+              "authored_at": "2026-08-18T10:05:00Z"
+            }
+          }
+        ]
+      },
+      "why_hard": "Looks like a contradiction but is not: the newer message says 'retired' and Jira/PR corroborate. One-tap 'pick newer'."
+    },
+    {
+      "id": "T2",
+      "kind": "stale",
+      "judgement": "temporal_supersession",
+      "severity": 3,
+      "decision": "D5",
+      "suggested_resolution": "pick_b",
+      "title": "DR: warm standby, RTO 15 min (Jun) vs decommissioned, RTO hours (Oct)",
+      "sides": {
+        "a": [
+          {
+            "role": "true in June",
+            "quote": "warm standby in us-east-1 is up with streaming replication",
+            "source_ref": {
+              "kind": "slack",
+              "external_id": "C01PAYINC:1782382800.000100",
+              "scope": "#payments-incidents",
+              "author": "sasha.kim",
+              "authored_at": "2026-06-25T10:20:00Z"
+            }
+          }
+        ],
+        "b": [
+          {
+            "role": "explicit supersession; terraform commit corroborates",
+            "quote": "the us-east-1 standby was decommissioned on Sep 30",
+            "source_ref": {
+              "kind": "slack",
+              "external_id": "C01PAYINC:1790932200.000121",
+              "scope": "#payments-incidents",
+              "author": "sasha.kim",
+              "authored_at": "2026-10-02T09:10:00Z"
+            }
+          }
+        ]
+      },
+      "why_hard": "Not a real conflict, state changed. The business reason is in locked #exec-finance evidence (R2)."
+    },
+    {
+      "id": "G1",
+      "kind": "missing_info",
+      "what_is_missing": "rationale",
+      "severity": 3,
+      "decision": "D6",
+      "suggested_resolution": "needs_human",
+      "title": "Why header-based API versioning instead of /v2 paths?",
+      "prompt_for_dev": "One line: why header versioning over URL paths, and what alternatives were rejected?",
+      "why_hard": "Decision + implementation exist, but no source states a reason or alternatives. Author left Aug 7."
+    },
+    {
+      "id": "G2",
+      "kind": "ownership_gap",
+      "what_is_missing": "owner",
+      "severity": 4,
+      "decision": "D7",
+      "suggested_resolution": "needs_human",
+      "title": "reconcile-ledger CronJob is owned by someone who left on Aug 7",
+      "prompt_for_dev": "Who owns reconcile-ledger now, and what should happen when it flags a mismatch above $1?",
+      "why_hard": "Owner claim points at a person with status=departed; no successor claim exists; runbook 'lives in my head'."
+    },
+    {
+      "id": "G3",
+      "kind": "missing_info",
+      "what_is_missing": "documentation",
+      "severity": 4,
+      "decision": "D8",
+      "suggested_resolution": "needs_human",
+      "title": "ledger-snapshot-export: what does it write, where, and who consumes it?",
+      "prompt_for_dev": "Where does ledger-snapshot-export write, who at Finance consumes it, and what breaks if it misses 03:00 UTC?",
+      "why_hard": "An undocumented nightly job with a hard 03:00 UTC downstream deadline; every source admits not knowing. NOTE: add 'documentation' to MissingInfoFlag.what_is_missing in the Pydantic models."
+    },
+    {
+      "id": "G4",
+      "kind": "unanswered_question",
+      "what_is_missing": "credentials_location",
+      "severity": 5,
+      "decision": "D9",
+      "suggested_resolution": "needs_human",
+      "title": "Nobody knows how to rotate the webhook signing secret (due Dec 1)",
+      "prompt_for_dev": "Where does the signing secret live and what are the exact rotation steps?",
+      "why_hard": "A direct question went unanswered for 2+ weeks, PAY-212 has no owner and 'Procedure: TBD', and the deadline is 24 days out."
+    }
+  ],
+  "restricted_evidence": [
+    {
+      "role": "rationale for D1 (why Redis was never provisioned)",
+      "quote": "declined for FY26",
+      "source_ref": {
+        "kind": "slack",
+        "external_id": "C02EXECFIN:1777567500.000107",
+        "scope": "#exec-finance",
+        "author": "noah.brandt",
+        "authored_at": "2026-04-30T16:45:00Z"
+      }
+    },
+    {
+      "role": "rationale for D5 (why the DR standby was decommissioned)",
+      "quote": "costs $6.2k/mo",
+      "source_ref": {
+        "kind": "slack",
+        "external_id": "C02EXECFIN:1788866100.000128",
+        "scope": "#exec-finance",
+        "author": "noah.brandt",
+        "authored_at": "2026-09-08T11:15:00Z"
+      }
+    }
+  ],
+  "permissions": {
+    "personas": [
+      {
+        "email": "arjun@relay.demo",
+        "role": "incoming",
+        "org_role": "engineer",
+        "expect_locked_evidence": 2,
+        "expect_locked_claims": [
+          "rationale of D1",
+          "rationale of D5"
+        ],
+        "expect_visible_decisions": 12,
+        "note": "sees every decision; D1 and D5 show a locked WHY"
+      },
+      {
+        "email": "maya@relay.demo",
+        "role": "departing",
+        "org_role": "engineer",
+        "grant": "#exec-finance",
+        "expect_locked_evidence": 0,
+        "note": "can triage all 9 doubts, including those touching restricted claims"
+      },
+      {
+        "email": "rachel@relay.demo",
+        "role": "viewer",
+        "org_role": "manager",
+        "expect_locked_evidence": 0,
+        "note": "unlocked via org role, no explicit grant"
+      }
+    ]
+  }
+}

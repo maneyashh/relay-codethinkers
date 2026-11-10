@@ -1,0 +1,454 @@
+{
+  "repo": "meridian/payments-service",
+  "default_branch": "main",
+  "relay_scope": {
+    "kind": "github_pr",
+    "external_ref": "meridian/payments-service",
+    "access": "team",
+    "required_role": null,
+    "reveal_label": true
+  },
+  "users": [
+    {
+      "login": "maya-okafor",
+      "name": "Maya Okafor"
+    },
+    {
+      "login": "tomas-rivera",
+      "name": "Tomas Rivera"
+    },
+    {
+      "login": "li-wei",
+      "name": "Li Wei"
+    },
+    {
+      "login": "sasha-kim",
+      "name": "Sasha Kim"
+    },
+    {
+      "login": "rachel-lindqvist",
+      "name": "Rachel Lindqvist"
+    },
+    {
+      "login": "priya-raman",
+      "name": "Priya Raman"
+    },
+    {
+      "login": "arjun-mehta",
+      "name": "Arjun Mehta"
+    }
+  ],
+  "pull_requests": [
+    {
+      "number": 290,
+      "title": "Enforce Idempotency-Key on charge and refund endpoints",
+      "state": "merged",
+      "user": "li-wei",
+      "created_at": "2026-03-10T11:00:00Z",
+      "merged_at": "2026-03-18T15:30:00Z",
+      "html_url": "https://github.com/meridian/payments-service/pull/290",
+      "head": "li/idempotency-keys",
+      "base": "main",
+      "labels": [
+        "api",
+        "reliability"
+      ],
+      "files_changed": [
+        "api/charges.py",
+        "api/refunds.py",
+        "db/migrations/0031_idempotency_keys.sql"
+      ],
+      "body": "Implements PAY-118.\n\n- POST /v1/charges and POST /v1/refunds now return 400 `idempotency_key_required` when the header is missing\n- Keys are persisted in `idempotency_keys` with a 24h TTL\n- Replays return the stored response verbatim\n\nTested against the Brightcart sandbox.",
+      "reviews": [
+        {
+          "id": 5001,
+          "user": "maya-okafor",
+          "state": "APPROVED",
+          "submitted_at": "2026-03-17T10:00:00Z",
+          "body": "Approved. This closes the double charge hole from INC-2026-014."
+        }
+      ],
+      "comments": []
+    },
+    {
+      "number": 297,
+      "title": "Switch amounts to integer minor units",
+      "state": "merged",
+      "user": "tomas-rivera",
+      "created_at": "2026-03-20T10:00:00Z",
+      "merged_at": "2026-03-25T11:00:00Z",
+      "html_url": "https://github.com/meridian/payments-service/pull/297",
+      "head": "tomas/amount-minor",
+      "base": "main",
+      "labels": [
+        "api",
+        "ledger"
+      ],
+      "files_changed": [
+        "api/schemas.py",
+        "ledger/models.py",
+        "db/migrations/0033_amount_minor.sql"
+      ],
+      "body": "Implements PAY-122. `amount` (decimal string) becomes `amount_minor` (integer) across the API and the ledger. Adds `CHECK (amount_minor >= 0)` on `ledger_entries`. Currency now travels in a separate `currency` field (ISO 4217).",
+      "reviews": [
+        {
+          "id": 5002,
+          "user": "li-wei",
+          "state": "APPROVED",
+          "submitted_at": "2026-03-24T15:30:00Z",
+          "body": "LGTM, ran the contract tests against staging."
+        }
+      ],
+      "comments": []
+    },
+    {
+      "number": 309,
+      "title": "chore: add ledger snapshot export",
+      "state": "merged",
+      "user": "tomas-rivera",
+      "created_at": "2026-04-06T13:00:00Z",
+      "merged_at": "2026-04-08T10:10:00Z",
+      "html_url": "https://github.com/meridian/payments-service/pull/309",
+      "head": "tomas/snapshot-export",
+      "base": "main",
+      "labels": [
+        "chore"
+      ],
+      "files_changed": [
+        "k8s/cronjobs/ledger-snapshot-export.yaml",
+        "jobs/snapshot_export.py"
+      ],
+      "body": "Adds the `ledger-snapshot-export` CronJob at 02:15 UTC. See Finance.",
+      "reviews": [
+        {
+          "id": 5003,
+          "user": "maya-okafor",
+          "state": "APPROVED",
+          "submitted_at": "2026-04-07T11:00:00Z",
+          "body": "Approving, but we should document this."
+        }
+      ],
+      "comments": [
+        {
+          "id": 6001,
+          "user": "maya-okafor",
+          "created_at": "2026-04-07T10:50:00Z",
+          "body": "What does Finance do with this file, and where does it get written?",
+          "path": "jobs/snapshot_export.py",
+          "line": 1
+        },
+        {
+          "id": 6002,
+          "user": "tomas-rivera",
+          "created_at": "2026-04-07T14:15:00Z",
+          "body": "Not totally sure on the details, Noah's team asked for it. Please don't change the schedule or they'll page me.",
+          "in_reply_to_id": 6001,
+          "path": "jobs/snapshot_export.py",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "number": 318,
+      "title": "Per-merchant rate limiting (Postgres token bucket)",
+      "state": "merged",
+      "user": "maya-okafor",
+      "created_at": "2026-05-04T10:00:00Z",
+      "merged_at": "2026-05-08T16:45:00Z",
+      "html_url": "https://github.com/meridian/payments-service/pull/318",
+      "head": "maya/rate-limit-pg",
+      "base": "main",
+      "labels": [
+        "api",
+        "brightcart"
+      ],
+      "files_changed": [
+        "db/migrations/0042_rate_limit_buckets.sql",
+        "gateway/rate_limit.py",
+        "config/merchant_limits.yaml"
+      ],
+      "body": "Implements PAY-142.\n\nAdds a `rate_limit_buckets` table and does the token-bucket check in a single `UPDATE ... RETURNING` per request. Default is 100 req/s per merchant, overridable in `merchant_limits`.\n\nRedis is NOT used in this PR. Adds ~2ms p99 per request in load tests.",
+      "reviews": [
+        {
+          "id": 5004,
+          "user": "li-wei",
+          "state": "APPROVED",
+          "submitted_at": "2026-05-08T14:00:00Z",
+          "body": "LGTM. I thought we decided on Redis in #payments-eng though?"
+        }
+      ],
+      "comments": [
+        {
+          "id": 6003,
+          "user": "maya-okafor",
+          "created_at": "2026-05-08T14:20:00Z",
+          "body": "We did. Postgres for now, Redis later. Didn't want to block the Brightcart launch."
+        }
+      ]
+    },
+    {
+      "number": 326,
+      "title": "Nightly ledger reconciliation job",
+      "state": "merged",
+      "user": "tomas-rivera",
+      "created_at": "2026-05-14T10:00:00Z",
+      "merged_at": "2026-05-19T15:00:00Z",
+      "html_url": "https://github.com/meridian/payments-service/pull/326",
+      "head": "tomas/reconcile-ledger",
+      "base": "main",
+      "labels": [
+        "ledger",
+        "cron"
+      ],
+      "files_changed": [
+        "k8s/cronjobs/reconcile-ledger.yaml",
+        "jobs/reconcile_ledger.py"
+      ],
+      "body": "Implements PAY-163.\n\nAdds the `reconcile-ledger` CronJob (03:30 UTC). It compares ledger entries with the PSP settlement report and opens a Jira ticket for every mismatch above $1.\n\nOwner: @tomas-rivera",
+      "reviews": [
+        {
+          "id": 5005,
+          "user": "maya-okafor",
+          "state": "APPROVED",
+          "submitted_at": "2026-05-18T10:00:00Z",
+          "body": "Looks good."
+        }
+      ],
+      "comments": []
+    },
+    {
+      "number": 331,
+      "title": "API versioning via Meridian-Version header",
+      "state": "merged",
+      "user": "tomas-rivera",
+      "created_at": "2026-05-28T10:00:00Z",
+      "merged_at": "2026-06-05T14:00:00Z",
+      "html_url": "https://github.com/meridian/payments-service/pull/331",
+      "head": "tomas/api-version-header",
+      "base": "main",
+      "labels": [
+        "api"
+      ],
+      "files_changed": [
+        "api/versioning.py",
+        "api/router.py"
+      ],
+      "body": "Adds the date-based `Meridian-Version` request header. Requests without it default to the version pinned on the merchant account. Removes the unused /v2 router stub.",
+      "reviews": [
+        {
+          "id": 5006,
+          "user": "maya-okafor",
+          "state": "APPROVED",
+          "submitted_at": "2026-06-04T10:00:00Z",
+          "body": "LGTM."
+        }
+      ],
+      "comments": []
+    },
+    {
+      "number": 341,
+      "title": "Webhooks: cap retries at 3 with longer backoff",
+      "state": "merged",
+      "user": "tomas-rivera",
+      "created_at": "2026-06-01T10:00:00Z",
+      "merged_at": "2026-06-02T11:00:00Z",
+      "html_url": "https://github.com/meridian/payments-service/pull/341",
+      "head": "tomas/webhook-retry-cap",
+      "base": "main",
+      "labels": [
+        "webhooks"
+      ],
+      "files_changed": [
+        "webhooks/worker.py",
+        "config/webhooks.yaml"
+      ],
+      "body": "Brightcart told us our retry storms were knocking over their endpoint during deploys. Dropping to 3 attempts with 2s / 10s / 60s backoff. Delivery is still at-least-once; events that fail the 3rd attempt are marked `failed`.",
+      "reviews": [
+        {
+          "id": 5007,
+          "user": "maya-okafor",
+          "state": "APPROVED",
+          "submitted_at": "2026-06-02T09:30:00Z",
+          "body": "Fine by me, ship it."
+        }
+      ],
+      "comments": []
+    },
+    {
+      "number": 352,
+      "title": "Ledger v2 dual-write behind ledger_v2_writes",
+      "state": "merged",
+      "user": "maya-okafor",
+      "created_at": "2026-06-12T10:00:00Z",
+      "merged_at": "2026-06-24T11:00:00Z",
+      "html_url": "https://github.com/meridian/payments-service/pull/352",
+      "head": "maya/ledger-v2-dual-write",
+      "base": "main",
+      "labels": [
+        "ledger"
+      ],
+      "files_changed": [
+        "ledger/v2/writer.py",
+        "db/migrations/0048_ledger_v2.sql"
+      ],
+      "body": "Implements PAY-188. Every ledger entry is also written to the v2 tables when the `ledger_v2_writes` flag is on (default: off). Rolling back is just turning the flag off, no migration needed.",
+      "reviews": [
+        {
+          "id": 5008,
+          "user": "li-wei",
+          "state": "APPROVED",
+          "submitted_at": "2026-06-23T16:00:00Z",
+          "body": "Tested with the flag on and off in staging, both paths behave."
+        }
+      ],
+      "comments": []
+    },
+    {
+      "number": 356,
+      "title": "ledger client: add short-lived service JWTs",
+      "state": "merged",
+      "user": "li-wei",
+      "created_at": "2026-07-08T10:00:00Z",
+      "merged_at": "2026-07-14T14:30:00Z",
+      "html_url": "https://github.com/meridian/payments-service/pull/356",
+      "head": "li/ledger-service-jwt",
+      "base": "main",
+      "labels": [
+        "security"
+      ],
+      "files_changed": [
+        "clients/ledger.py",
+        "config/ledger_auth.yaml"
+      ],
+      "body": "The mesh sidecar is not injected in the `ledger` namespace yet, so payments-service calls to ledger-service currently go over plain HTTP inside the cluster. This PR adds short-lived service JWTs (HS256, signed with `LEDGER_SVC_KEY`) so ledger can at least verify the caller.\n\nTODO: remove once the mesh is enabled for ledger.",
+      "reviews": [
+        {
+          "id": 5009,
+          "user": "maya-okafor",
+          "state": "APPROVED",
+          "submitted_at": "2026-07-13T11:00:00Z",
+          "body": "Approved as a stopgap until the mesh is enabled for ledger."
+        }
+      ],
+      "comments": []
+    },
+    {
+      "number": 362,
+      "title": "Support two active webhook signing secrets",
+      "state": "merged",
+      "user": "tomas-rivera",
+      "created_at": "2026-07-28T11:00:00Z",
+      "merged_at": "2026-08-04T10:00:00Z",
+      "html_url": "https://github.com/meridian/payments-service/pull/362",
+      "head": "tomas/dual-signing-secrets",
+      "base": "main",
+      "labels": [
+        "webhooks",
+        "security"
+      ],
+      "files_changed": [
+        "webhooks/signing.py"
+      ],
+      "body": "Allows a `current` and a `next` signing secret so we can rotate without downtime. Merchants verify against either during the overlap window.\n\nRotation procedure: TODO, will write it up in the runbook.",
+      "reviews": [
+        {
+          "id": 5010,
+          "user": "li-wei",
+          "state": "APPROVED",
+          "submitted_at": "2026-08-03T15:00:00Z",
+          "body": "Makes sense."
+        }
+      ],
+      "comments": []
+    },
+    {
+      "number": 384,
+      "title": "ci: deploy to prod on every merge to main",
+      "state": "merged",
+      "user": "sasha-kim",
+      "created_at": "2026-08-14T15:00:00Z",
+      "merged_at": "2026-08-17T15:30:00Z",
+      "html_url": "https://github.com/meridian/payments-service/pull/384",
+      "head": "sasha/continuous-deploy",
+      "base": "main",
+      "labels": [
+        "ci-cd"
+      ],
+      "files_changed": [
+        ".github/workflows/deploy.yaml"
+      ],
+      "body": "Implements PAY-205. Removes the Thursday release train gate and the manual approval step. Merges to main now deploy to prod automatically; risky changes must be behind a feature flag.",
+      "reviews": [
+        {
+          "id": 5011,
+          "user": "rachel-lindqvist",
+          "state": "APPROVED",
+          "submitted_at": "2026-08-17T15:00:00Z",
+          "body": "Approved. Go ahead."
+        }
+      ],
+      "comments": []
+    }
+  ],
+  "issues": [
+    {
+      "number": 301,
+      "title": "Flaky ledger integration tests",
+      "state": "closed",
+      "user": "li-wei",
+      "created_at": "2026-04-01T09:00:00Z",
+      "closed_at": "2026-04-03T12:00:00Z",
+      "html_url": "https://github.com/meridian/payments-service/issues/301",
+      "labels": [
+        "flaky-test"
+      ],
+      "body": "test_ledger_concurrent_writes fails roughly 1 in 10 runs on CI. Looks like a race on the sequence allocation in the fixture, not in prod code.",
+      "comments": []
+    },
+    {
+      "number": 389,
+      "title": "Document the nightly cron jobs",
+      "state": "open",
+      "user": "maya-okafor",
+      "created_at": "2026-09-01T10:00:00Z",
+      "closed_at": null,
+      "html_url": "https://github.com/meridian/payments-service/issues/389",
+      "labels": [
+        "docs",
+        "handover"
+      ],
+      "body": "We have two nightly CronJobs (ledger-snapshot-export and reconcile-ledger) and nobody can explain end to end what they do. Needs: purpose, owner, where output goes, who consumes it, and what to do when they fail.\n\nTODO before handover.",
+      "comments": []
+    }
+  ],
+  "commits": [
+    {
+      "sha": "217b7d8d0cceb54223215cbbbd203eeb9179fbc4",
+      "author": "li-wei",
+      "date": "2026-09-10T14:12:00Z",
+      "message": "fix: handle null currency in refund path\n\nRefunds created from legacy charges had no currency set and crashed the serializer. Fall back to the charge currency.",
+      "html_url": "https://github.com/meridian/payments-service/commit/217b7d8d0cceb54223215cbbbd203eeb9179fbc4"
+    },
+    {
+      "sha": "8c498d4d27fd80aed5fbe9f2e529090187342cf8",
+      "author": "maya-okafor",
+      "date": "2026-09-14T10:30:00Z",
+      "message": "docs: update README quickstart",
+      "html_url": "https://github.com/meridian/payments-service/commit/8c498d4d27fd80aed5fbe9f2e529090187342cf8"
+    },
+    {
+      "sha": "d08b66affe257b64f06f4521785511fafa80066d",
+      "author": "sasha-kim",
+      "date": "2026-09-30T16:05:00Z",
+      "message": "ops: remove us-east-1 standby from terraform\n\nDecommissioned as part of the cost review. DR is now backup/restore only.",
+      "html_url": "https://github.com/meridian/payments-service/commit/d08b66affe257b64f06f4521785511fafa80066d"
+    },
+    {
+      "sha": "2ae871f457cc190783903956261b90f548a10bb6",
+      "author": "sasha-kim",
+      "date": "2026-10-01T09:20:00Z",
+      "message": "chore: bump psycopg to 3.2.3",
+      "html_url": "https://github.com/meridian/payments-service/commit/2ae871f457cc190783903956261b90f548a10bb6"
+    }
+  ]
+}

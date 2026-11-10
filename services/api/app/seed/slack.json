@@ -1,0 +1,493 @@
+{
+  "workspace": {
+    "id": "T0MERIDIAN",
+    "name": "meridian",
+    "domain": "meridian-pay"
+  },
+  "users": [
+    {
+      "handle": "maya.okafor",
+      "real_name": "Maya Okafor"
+    },
+    {
+      "handle": "tomas.rivera",
+      "real_name": "Tomas Rivera"
+    },
+    {
+      "handle": "li.wei",
+      "real_name": "Li Wei"
+    },
+    {
+      "handle": "sasha.kim",
+      "real_name": "Sasha Kim"
+    },
+    {
+      "handle": "rachel.lindqvist",
+      "real_name": "Rachel Lindqvist"
+    },
+    {
+      "handle": "priya.raman",
+      "real_name": "Priya Raman"
+    },
+    {
+      "handle": "noah.brandt",
+      "real_name": "Noah Brandt"
+    },
+    {
+      "handle": "arjun.mehta",
+      "real_name": "Arjun Mehta"
+    }
+  ],
+  "channels": [
+    {
+      "id": "C01PAYENG",
+      "name": "payments-eng",
+      "members": [
+        "maya.okafor",
+        "tomas.rivera",
+        "li.wei",
+        "sasha.kim",
+        "rachel.lindqvist",
+        "priya.raman",
+        "arjun.mehta"
+      ],
+      "relay_scope": {
+        "kind": "slack",
+        "external_ref": "#payments-eng",
+        "access": "team",
+        "required_role": null,
+        "reveal_label": true
+      },
+      "messages": [
+        {
+          "ts": "1772615520.000100",
+          "iso": "2026-03-04T09:12:00Z",
+          "user": "maya.okafor",
+          "text": "Decision: every POST to /v1/charges and /v1/refunds must carry an Idempotency-Key header. We got bitten by double charges on client retries last quarter (INC-2026-014), so the API will reject requests without one.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "white_check_mark",
+              "count": 3
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1772615520000100"
+        },
+        {
+          "ts": "1772616000.000107",
+          "iso": "2026-03-04T09:20:00Z",
+          "user": "li.wei",
+          "text": "+1. I'll write it up as PAY-118 and take the implementation.",
+          "thread_ts": "1772615520.000100",
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1772616000000107"
+        },
+        {
+          "ts": "1773070800.000114",
+          "iso": "2026-03-09T15:40:00Z",
+          "user": "tomas.rivera",
+          "text": "Reminder for anyone adding endpoints: all amounts are integers in minor units (cents). No floats, no decimal strings. The ledger enforces it with a CHECK constraint so bad values blow up loudly.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "thumbsup",
+              "count": 2
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1773070800000114"
+        },
+        {
+          "ts": "1773309600.000121",
+          "iso": "2026-03-12T10:00:00Z",
+          "user": "maya.okafor",
+          "text": "Reminder: payments-service deploys to prod on Thursdays only (release train, 2pm UTC). Anything merged after Wednesday EOD rides the next train. Hotfixes outside the train need Rachel's sign-off.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "thumbsup",
+              "count": 3
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1773309600000121"
+        },
+        {
+          "ts": "1776159000.000128",
+          "iso": "2026-04-14T09:30:00Z",
+          "user": "maya.okafor",
+          "text": "Decision: we're moving API rate limiting to Redis with a sliding-window counter. In-process counters fall apart the moment we run more than one pod, and Brightcart is about to ramp up traffic.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "thumbsup",
+              "count": 4
+            },
+            {
+              "name": "rocket",
+              "count": 1
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1776159000000128"
+        },
+        {
+          "ts": "1776159660.000135",
+          "iso": "2026-04-14T09:41:00Z",
+          "user": "tomas.rivera",
+          "text": "Agreed. I'll sketch the key schema this week.",
+          "thread_ts": "1776159000.000128",
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1776159660000135"
+        },
+        {
+          "ts": "1776780300.000142",
+          "iso": "2026-04-21T14:05:00Z",
+          "user": "priya.raman",
+          "text": "Brightcart go-live is May 12. They're our biggest merchant yet, so rate limiting has to be in place before then.",
+          "thread_ts": null,
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1776780300000142"
+        },
+        {
+          "ts": "1779880500.000149",
+          "iso": "2026-05-27T11:15:00Z",
+          "user": "tomas.rivera",
+          "text": "We're going with header-based API versioning (Meridian-Version: 2026-06-01) instead of /v1 and /v2 paths. PR is coming this week.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "thumbsup",
+              "count": 2
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1779880500000149"
+        },
+        {
+          "ts": "1779880920.000156",
+          "iso": "2026-05-27T11:22:00Z",
+          "user": "maya.okafor",
+          "text": "Sounds good.",
+          "thread_ts": "1779880500.000149",
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1779880920000156"
+        },
+        {
+          "ts": "1781096400.000163",
+          "iso": "2026-06-10T13:00:00Z",
+          "user": "maya.okafor",
+          "text": "Ledger v2 writes ship dark behind the ledger_v2_writes flag. Rollout is 1% -> 10% -> 50% -> 100% over two weeks, and the kill switch is just the flag itself.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "white_check_mark",
+              "count": 2
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1781096400000163"
+        },
+        {
+          "ts": "1781800200.000170",
+          "iso": "2026-06-18T16:30:00Z",
+          "user": "sasha.kim",
+          "text": "FYI everything between payments-service and ledger-service is mTLS through the mesh now, so we're covered on the PCI item.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "tada",
+              "count": 3
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1781800200000170"
+        },
+        {
+          "ts": "1781800440.000177",
+          "iso": "2026-06-18T16:34:00Z",
+          "user": "rachel.lindqvist",
+          "text": "Great, thanks Sasha. I'll let the auditors know.",
+          "thread_ts": "1781800200.000170",
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1781800440000177"
+        },
+        {
+          "ts": "1782985800.000184",
+          "iso": "2026-07-02T09:50:00Z",
+          "user": "li.wei",
+          "text": "Standup is moved to 10:15 today, Maya is out until 10.",
+          "thread_ts": null,
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1782985800000184"
+        },
+        {
+          "ts": "1784635800.000191",
+          "iso": "2026-07-21T12:10:00Z",
+          "user": "priya.raman",
+          "text": "Team lunch on Thursday at 12:30. Vote for the place in the thread.",
+          "thread_ts": null,
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1784635800000191"
+        },
+        {
+          "ts": "1786124700.000198",
+          "iso": "2026-08-07T17:45:00Z",
+          "user": "tomas.rivera",
+          "text": "Today is my last day, folks. Thanks for everything! The reconcile-ledger job pretty much runs itself, and mismatches under $5 are almost always FX rounding. Ping me on LinkedIn if something is really on fire :slightly_smiling_face:",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "heart",
+              "count": 8
+            },
+            {
+              "name": "sob",
+              "count": 3
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1786124700000198"
+        },
+        {
+          "ts": "1787047500.000205",
+          "iso": "2026-08-18T10:05:00Z",
+          "user": "rachel.lindqvist",
+          "text": "Update: we've retired the Thursday release train. As of today payments-service deploys continuously from main behind feature flags. Hotfix sign-off is no longer needed, just page the on-call if a deploy looks bad.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "white_check_mark",
+              "count": 5
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1787047500000205"
+        },
+        {
+          "ts": "1788339300.000212",
+          "iso": "2026-09-02T08:55:00Z",
+          "user": "li.wei",
+          "text": "CI is flaky on the ledger integration tests again, re-running.",
+          "thread_ts": null,
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1788339300000212"
+        },
+        {
+          "ts": "1789558200.000219",
+          "iso": "2026-09-16T11:30:00Z",
+          "user": "sasha.kim",
+          "text": "For the on-call runbook: per PAY-157, webhooks retry 5 times with exponential backoff, so a merchant outage under ~30 seconds heals itself without losing events.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "thumbsup",
+              "count": 1
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1789558200000219"
+        },
+        {
+          "ts": "1791795600.000226",
+          "iso": "2026-10-12T09:00:00Z",
+          "user": "priya.raman",
+          "text": "Quarterly planning doc is open for comments, please add your Q1 asks by Friday.",
+          "thread_ts": null,
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1791795600000226"
+        },
+        {
+          "ts": "1792592400.000233",
+          "iso": "2026-10-21T14:20:00Z",
+          "user": "li.wei",
+          "text": "Does anyone know how we rotate the webhook signing secret? PAY-212 says it's due Dec 1 and I can't find a runbook anywhere. @maya.okafor any idea?",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "eyes",
+              "count": 2
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1792592400000233"
+        },
+        {
+          "ts": "1793610000.000240",
+          "iso": "2026-11-02T09:00:00Z",
+          "user": "rachel.lindqvist",
+          "text": "Please welcome Arjun Mehta, who is taking over payments-service from Maya on Nov 20. Maya's last day is Nov 20 as well, so let's make the handover count.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "wave",
+              "count": 9
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1793610000000240"
+        },
+        {
+          "ts": "1793610300.000247",
+          "iso": "2026-11-02T09:05:00Z",
+          "user": "arjun.mehta",
+          "text": "Thanks Rachel! Excited to dig in.",
+          "thread_ts": "1793610000.000240",
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYENG/p1793610300000247"
+        }
+      ]
+    },
+    {
+      "id": "C01PAYINC",
+      "name": "payments-incidents",
+      "members": [
+        "maya.okafor",
+        "tomas.rivera",
+        "li.wei",
+        "sasha.kim",
+        "rachel.lindqvist"
+      ],
+      "relay_scope": {
+        "kind": "slack",
+        "external_ref": "#payments-incidents",
+        "access": "team",
+        "required_role": null,
+        "reveal_label": true
+      },
+      "messages": [
+        {
+          "ts": "1782382800.000100",
+          "iso": "2026-06-25T10:20:00Z",
+          "user": "sasha.kim",
+          "text": "DR status for the payments db: warm standby in us-east-1 is up with streaming replication, and we ran a failover test this week. RTO is about 15 minutes and RPO is under a minute.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "white_check_mark",
+              "count": 4
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYINC/p1782382800000100"
+        },
+        {
+          "ts": "1782789000.000107",
+          "iso": "2026-06-30T03:10:00Z",
+          "user": "sasha.kim",
+          "text": "ledger-snapshot-export timed out at 02:15 UTC but the retry succeeded. Finance wants the file by 03:00 UTC every night, so we only have about 45 minutes of slack. Not sure where the file actually lands, maybe an S3 bucket?",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "eyes",
+              "count": 2
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYINC/p1782789000000107"
+        },
+        {
+          "ts": "1787730300.000114",
+          "iso": "2026-08-26T07:45:00Z",
+          "user": "li.wei",
+          "text": "Brief spike of 502s on /v1/charges at 07:31 UTC, recovered after a pod restart. No merchant impact reported.",
+          "thread_ts": null,
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYINC/p1787730300000114"
+        },
+        {
+          "ts": "1790932200.000121",
+          "iso": "2026-10-02T09:10:00Z",
+          "user": "sasha.kim",
+          "text": "Heads up: the us-east-1 standby was decommissioned on Sep 30 as part of a cost review. DR is now cross-region backups only, so RTO is a few hours rather than 15 minutes. I'll update the runbook.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "eyes",
+              "count": 3
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C01PAYINC/p1790932200000121"
+        }
+      ]
+    },
+    {
+      "id": "C02EXECFIN",
+      "name": "exec-finance",
+      "members": [
+        "rachel.lindqvist",
+        "noah.brandt",
+        "maya.okafor"
+      ],
+      "relay_scope": {
+        "kind": "slack",
+        "external_ref": "#exec-finance",
+        "access": "restricted",
+        "required_role": "manager",
+        "reveal_label": true
+      },
+      "messages": [
+        {
+          "ts": "1777284000.000100",
+          "iso": "2026-04-27T10:00:00Z",
+          "user": "rachel.lindqvist",
+          "text": "Noah, heads-up: I have three infra asks for the FY26 H2 budget review. I'll send the sheet by Wednesday.",
+          "thread_ts": null,
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C02EXECFIN/p1777284000000100"
+        },
+        {
+          "ts": "1777567500.000107",
+          "iso": "2026-04-30T16:45:00Z",
+          "user": "noah.brandt",
+          "text": "Decision on the managed Redis request ($1,850/mo for the rate limiting cluster): declined for FY26. Infra spend is frozen except for compliance items. Payments should run on what they already pay for, i.e. Postgres. We can revisit in the Q1 FY27 planning cycle. Maya, adding you here for context.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "white_check_mark",
+              "count": 1
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C02EXECFIN/p1777567500000107"
+        },
+        {
+          "ts": "1778059800.000114",
+          "iso": "2026-05-06T09:30:00Z",
+          "user": "noah.brandt",
+          "text": "Reminder: Q2 board deck inputs are due Friday EOD. Please send final numbers to my team by Thursday.",
+          "thread_ts": null,
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C02EXECFIN/p1778059800000114"
+        },
+        {
+          "ts": "1780408800.000121",
+          "iso": "2026-06-02T14:00:00Z",
+          "user": "rachel.lindqvist",
+          "text": "Headcount sheet is updated with the two open backend reqs. Noah, can you approve?",
+          "thread_ts": null,
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C02EXECFIN/p1780408800000121"
+        },
+        {
+          "ts": "1788866100.000128",
+          "iso": "2026-09-08T11:15:00Z",
+          "user": "noah.brandt",
+          "text": "Cost review item: the idle us-east-1 DR standby for the payments db costs $6.2k/mo and has never been used in anger. Approving decommission effective Sep 30. Rachel, please have Sasha execute and make sure the risk is documented.",
+          "thread_ts": null,
+          "reactions": [
+            {
+              "name": "white_check_mark",
+              "count": 2
+            }
+          ],
+          "permalink": "https://meridian-pay.slack.com/archives/C02EXECFIN/p1788866100000128"
+        },
+        {
+          "ts": "1788866520.000135",
+          "iso": "2026-09-08T11:22:00Z",
+          "user": "rachel.lindqvist",
+          "text": "Acknowledged, I'll loop Sasha in today.",
+          "thread_ts": "1788866100.000128",
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C02EXECFIN/p1788866520000135"
+        },
+        {
+          "ts": "1791968400.000142",
+          "iso": "2026-10-14T09:00:00Z",
+          "user": "noah.brandt",
+          "text": "Reminder: vendor contract renewals are due next month, I'll circulate the list.",
+          "thread_ts": null,
+          "reactions": [],
+          "permalink": "https://meridian-pay.slack.com/archives/C02EXECFIN/p1791968400000142"
+        }
+      ]
+    }
+  ]
+}

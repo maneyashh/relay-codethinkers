@@ -1,0 +1,465 @@
+{
+  "site": "meridian-pay.atlassian.net",
+  "project": {
+    "key": "PAY",
+    "name": "Payments Platform"
+  },
+  "relay_scope": {
+    "kind": "jira",
+    "external_ref": "PAY",
+    "access": "team",
+    "required_role": null,
+    "reveal_label": true
+  },
+  "users": [
+    {
+      "account_id": "jira-maya",
+      "display_name": "Maya Okafor"
+    },
+    {
+      "account_id": "jira-tomas",
+      "display_name": "Tomas Rivera"
+    },
+    {
+      "account_id": "jira-li",
+      "display_name": "Li Wei"
+    },
+    {
+      "account_id": "jira-sasha",
+      "display_name": "Sasha Kim"
+    },
+    {
+      "account_id": "jira-rachel",
+      "display_name": "Rachel Lindqvist"
+    },
+    {
+      "account_id": "jira-priya",
+      "display_name": "Priya Raman"
+    },
+    {
+      "account_id": "jira-arjun",
+      "display_name": "Arjun Mehta"
+    }
+  ],
+  "issues": [
+    {
+      "key": "PAY-118",
+      "url": "https://meridian-pay.atlassian.net/browse/PAY-118",
+      "type": "Story",
+      "status": "Done",
+      "priority": "High",
+      "summary": "Require Idempotency-Key on charge and refund endpoints",
+      "description": "Reject POST /v1/charges and POST /v1/refunds requests that do not carry an Idempotency-Key header (HTTP 400, error code idempotency_key_required).\n\nKeys are stored for 24 hours and replayed responses must be byte-identical.\n\nMotivation: duplicate charges seen on client retries (INC-2026-014).",
+      "reporter": "jira-li",
+      "assignee": "jira-li",
+      "created": "2026-03-04T10:05:00Z",
+      "updated": "2026-03-18T16:00:00Z",
+      "resolved": "2026-03-18T16:00:00Z",
+      "labels": [
+        "api",
+        "reliability"
+      ],
+      "components": [
+        "payments-service"
+      ],
+      "comments": [
+        {
+          "id": "10001",
+          "author": "jira-maya",
+          "created": "2026-03-05T09:30:00Z",
+          "body": "Please make the TTL configurable per environment (default 24h) so staging can use 1h."
+        }
+      ],
+      "changelog": [
+        {
+          "created": "2026-03-04T12:05:00Z",
+          "author": "jira-li",
+          "field": "status",
+          "from": "To Do",
+          "to": "In Progress"
+        },
+        {
+          "created": "2026-03-18T16:00:00Z",
+          "author": "jira-li",
+          "field": "status",
+          "from": "In Progress",
+          "to": "Done"
+        }
+      ]
+    },
+    {
+      "key": "PAY-122",
+      "url": "https://meridian-pay.atlassian.net/browse/PAY-122",
+      "type": "Task",
+      "status": "Done",
+      "priority": "Medium",
+      "summary": "Normalize monetary amounts to integer minor units",
+      "description": "All monetary amounts in API requests, responses and the ledger are integers in minor units (1999 = USD 19.99). Currency is sent separately as an ISO 4217 code.\n\nAdd CHECK (amount_minor >= 0) to ledger_entries. No floats or decimal strings anywhere in the public API.",
+      "reporter": "jira-tomas",
+      "assignee": "jira-tomas",
+      "created": "2026-03-09T16:10:00Z",
+      "updated": "2026-03-25T11:00:00Z",
+      "resolved": "2026-03-25T11:00:00Z",
+      "labels": [
+        "api",
+        "ledger"
+      ],
+      "components": [
+        "payments-service"
+      ],
+      "comments": [
+        {
+          "id": "10002",
+          "author": "jira-li",
+          "created": "2026-03-25T10:40:00Z",
+          "body": "Verified in staging: the ledger rejects negative amounts and the API rejects decimal strings with a 422."
+        }
+      ],
+      "changelog": [
+        {
+          "created": "2026-03-09T18:10:00Z",
+          "author": "jira-tomas",
+          "field": "status",
+          "from": "To Do",
+          "to": "In Progress"
+        },
+        {
+          "created": "2026-03-25T11:00:00Z",
+          "author": "jira-tomas",
+          "field": "status",
+          "from": "In Progress",
+          "to": "Done"
+        }
+      ]
+    },
+    {
+      "key": "PAY-142",
+      "url": "https://meridian-pay.atlassian.net/browse/PAY-142",
+      "type": "Story",
+      "status": "Done",
+      "priority": "High",
+      "summary": "Per-merchant API rate limiting",
+      "description": "Enforce a default limit of 100 requests per second per merchant at the gateway, returning 429 with a Retry-After header when exceeded.\n\nImplementation: in-memory token bucket in the gateway middleware. No new infrastructure required for v1.\n\nBrightcart go-live (May 12) is the hard deadline.",
+      "reporter": "jira-priya",
+      "assignee": "jira-maya",
+      "created": "2026-04-22T11:30:00Z",
+      "updated": "2026-05-08T17:30:00Z",
+      "resolved": "2026-05-08T17:30:00Z",
+      "labels": [
+        "api",
+        "brightcart"
+      ],
+      "components": [
+        "payments-service"
+      ],
+      "comments": [
+        {
+          "id": "10003",
+          "author": "jira-maya",
+          "created": "2026-05-08T17:30:00Z",
+          "body": "Shipped in PR #318, closing."
+        }
+      ],
+      "changelog": [
+        {
+          "created": "2026-04-22T13:30:00Z",
+          "author": "jira-maya",
+          "field": "status",
+          "from": "To Do",
+          "to": "In Progress"
+        },
+        {
+          "created": "2026-05-08T17:30:00Z",
+          "author": "jira-maya",
+          "field": "status",
+          "from": "In Progress",
+          "to": "Done"
+        }
+      ]
+    },
+    {
+      "key": "PAY-157",
+      "url": "https://meridian-pay.atlassian.net/browse/PAY-157",
+      "type": "Story",
+      "status": "Done",
+      "priority": "High",
+      "summary": "Webhook delivery with retries",
+      "description": "Deliver merchant webhooks with at-least-once semantics. On a non-2xx response or a 10 second timeout, retry up to 5 times with exponential backoff starting at 1 second (1s, 2s, 4s, 8s, 16s).\n\nAfter the final failure, mark the event failed and show it in the merchant dashboard.",
+      "reporter": "jira-priya",
+      "assignee": "jira-tomas",
+      "created": "2026-05-12T10:00:00Z",
+      "updated": "2026-05-22T14:00:00Z",
+      "resolved": "2026-05-22T14:00:00Z",
+      "labels": [
+        "webhooks"
+      ],
+      "components": [
+        "payments-service"
+      ],
+      "comments": [
+        {
+          "id": "10004",
+          "author": "jira-tomas",
+          "created": "2026-05-22T14:00:00Z",
+          "body": "Delivery worker is live in prod. Retries per spec."
+        }
+      ],
+      "changelog": [
+        {
+          "created": "2026-05-12T12:00:00Z",
+          "author": "jira-tomas",
+          "field": "status",
+          "from": "To Do",
+          "to": "In Progress"
+        },
+        {
+          "created": "2026-05-22T14:00:00Z",
+          "author": "jira-tomas",
+          "field": "status",
+          "from": "In Progress",
+          "to": "Done"
+        }
+      ]
+    },
+    {
+      "key": "PAY-163",
+      "url": "https://meridian-pay.atlassian.net/browse/PAY-163",
+      "type": "Task",
+      "status": "Done",
+      "priority": "Medium",
+      "summary": "Nightly ledger reconciliation against PSP settlement reports",
+      "description": "Add a nightly job that compares ledger entries with the PSP settlement report and opens a ticket for every mismatch above 1 USD. Runs after the settlement files land (03:30 UTC). Alerts go to #payments-incidents.",
+      "reporter": "jira-priya",
+      "assignee": "jira-tomas",
+      "created": "2026-05-14T09:30:00Z",
+      "updated": "2026-05-19T16:20:00Z",
+      "resolved": "2026-05-19T16:20:00Z",
+      "labels": [
+        "ledger",
+        "cron"
+      ],
+      "components": [
+        "payments-service"
+      ],
+      "comments": [
+        {
+          "id": "10005",
+          "author": "jira-tomas",
+          "created": "2026-05-19T16:20:00Z",
+          "body": "Deployed. I'm the point of contact for mismatches. The runbook lives in my head for now, will write it up."
+        }
+      ],
+      "changelog": [
+        {
+          "created": "2026-05-14T11:30:00Z",
+          "author": "jira-tomas",
+          "field": "status",
+          "from": "To Do",
+          "to": "In Progress"
+        },
+        {
+          "created": "2026-05-19T16:20:00Z",
+          "author": "jira-tomas",
+          "field": "status",
+          "from": "In Progress",
+          "to": "Done"
+        }
+      ]
+    },
+    {
+      "key": "PAY-171",
+      "url": "https://meridian-pay.atlassian.net/browse/PAY-171",
+      "type": "Story",
+      "status": "Done",
+      "priority": "Highest",
+      "summary": "PCI: mutual authentication for service-to-service calls",
+      "description": "PCI DSS finding: internal calls that carry cardholder data (payments-service to ledger-service and vault-service) must be mutually authenticated.\n\nRequirement: all service-to-service calls use mTLS through the service mesh. Must be in place before the Q4 audit on Nov 30.",
+      "reporter": "jira-rachel",
+      "assignee": "jira-sasha",
+      "created": "2026-05-20T13:00:00Z",
+      "updated": "2026-06-19T09:00:00Z",
+      "resolved": "2026-06-19T09:00:00Z",
+      "labels": [
+        "pci",
+        "compliance"
+      ],
+      "components": [
+        "payments-service",
+        "infra"
+      ],
+      "comments": [
+        {
+          "id": "10006",
+          "author": "jira-sasha",
+          "created": "2026-06-19T09:00:00Z",
+          "body": "Closing this. Mesh mTLS is enabled for the ledger and vault namespaces."
+        }
+      ],
+      "changelog": [
+        {
+          "created": "2026-05-20T15:00:00Z",
+          "author": "jira-sasha",
+          "field": "status",
+          "from": "To Do",
+          "to": "In Progress"
+        },
+        {
+          "created": "2026-06-19T09:00:00Z",
+          "author": "jira-sasha",
+          "field": "status",
+          "from": "In Progress",
+          "to": "Done"
+        }
+      ]
+    },
+    {
+      "key": "PAY-176",
+      "url": "https://meridian-pay.atlassian.net/browse/PAY-176",
+      "type": "Task",
+      "status": "Done",
+      "priority": "High",
+      "summary": "Cross-region DR for the payments database",
+      "description": "Provision a warm standby of the payments db in us-east-1 with streaming replication. Target RTO 15 minutes, RPO under 1 minute. Run and document a failover test.",
+      "reporter": "jira-sasha",
+      "assignee": "jira-sasha",
+      "created": "2026-05-29T10:00:00Z",
+      "updated": "2026-06-24T15:00:00Z",
+      "resolved": "2026-06-24T15:00:00Z",
+      "labels": [
+        "dr",
+        "infra"
+      ],
+      "components": [
+        "infra"
+      ],
+      "comments": [
+        {
+          "id": "10007",
+          "author": "jira-sasha",
+          "created": "2026-06-24T15:00:00Z",
+          "body": "Standby is live and the failover test passed (RTO 12 min). Closing."
+        }
+      ],
+      "changelog": [
+        {
+          "created": "2026-05-29T12:00:00Z",
+          "author": "jira-sasha",
+          "field": "status",
+          "from": "To Do",
+          "to": "In Progress"
+        },
+        {
+          "created": "2026-06-24T15:00:00Z",
+          "author": "jira-sasha",
+          "field": "status",
+          "from": "In Progress",
+          "to": "Done"
+        }
+      ]
+    },
+    {
+      "key": "PAY-188",
+      "url": "https://meridian-pay.atlassian.net/browse/PAY-188",
+      "type": "Story",
+      "status": "Done",
+      "priority": "High",
+      "summary": "Ledger v2 dual-write",
+      "description": "Dual-write every ledger entry to the v2 tables behind the LaunchDarkly flag ledger_v2_writes (default off). Rollback is flipping the flag off, no data migration required. Ledger v1 remains the source of truth for now.",
+      "reporter": "jira-maya",
+      "assignee": "jira-maya",
+      "created": "2026-06-08T10:30:00Z",
+      "updated": "2026-06-24T11:30:00Z",
+      "resolved": "2026-06-24T11:30:00Z",
+      "labels": [
+        "ledger"
+      ],
+      "components": [
+        "payments-service"
+      ],
+      "comments": [
+        {
+          "id": "10008",
+          "author": "jira-maya",
+          "created": "2026-06-24T11:30:00Z",
+          "body": "Merged in PR #352, rollout starts Monday."
+        }
+      ],
+      "changelog": [
+        {
+          "created": "2026-06-08T12:30:00Z",
+          "author": "jira-maya",
+          "field": "status",
+          "from": "To Do",
+          "to": "In Progress"
+        },
+        {
+          "created": "2026-06-24T11:30:00Z",
+          "author": "jira-maya",
+          "field": "status",
+          "from": "In Progress",
+          "to": "Done"
+        }
+      ]
+    },
+    {
+      "key": "PAY-205",
+      "url": "https://meridian-pay.atlassian.net/browse/PAY-205",
+      "type": "Task",
+      "status": "Done",
+      "priority": "High",
+      "summary": "Move payments-service to continuous deployment",
+      "description": "Retire the Thursday release train. Every merge to main deploys to prod automatically, with risky changes behind feature flags. Remove the hotfix sign-off requirement.",
+      "reporter": "jira-rachel",
+      "assignee": "jira-sasha",
+      "created": "2026-08-14T09:00:00Z",
+      "updated": "2026-08-18T09:30:00Z",
+      "resolved": "2026-08-18T09:30:00Z",
+      "labels": [
+        "ci-cd"
+      ],
+      "components": [
+        "payments-service"
+      ],
+      "comments": [],
+      "changelog": [
+        {
+          "created": "2026-08-14T11:00:00Z",
+          "author": "jira-sasha",
+          "field": "status",
+          "from": "To Do",
+          "to": "In Progress"
+        },
+        {
+          "created": "2026-08-18T09:30:00Z",
+          "author": "jira-sasha",
+          "field": "status",
+          "from": "In Progress",
+          "to": "Done"
+        }
+      ]
+    },
+    {
+      "key": "PAY-212",
+      "url": "https://meridian-pay.atlassian.net/browse/PAY-212",
+      "type": "Task",
+      "status": "To Do",
+      "priority": "High",
+      "summary": "Rotate webhook signing secret",
+      "description": "The webhook signing secret is rotated every 6 months. Next rotation is due 2026-12-01.\n\nOwner: TBD\nProcedure: TBD",
+      "reporter": "jira-priya",
+      "assignee": null,
+      "created": "2026-10-05T10:00:00Z",
+      "updated": "2026-10-05T10:00:00Z",
+      "resolved": null,
+      "labels": [
+        "webhooks",
+        "security"
+      ],
+      "components": [
+        "payments-service"
+      ],
+      "comments": [],
+      "changelog": []
+    }
+  ]
+}
