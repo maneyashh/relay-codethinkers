@@ -1,0 +1,559 @@
+[
+  {
+    "id": "d-001",
+    "kind": "hard_contradiction",
+    "severity": "critical",
+    "area": "core-platform",
+    "title": "Jira mandates Supabase; production runs Firebase",
+    "claim": "REL-201 mandates Supabase for every v2 service, but dozens of production commits since June write to Firebase—and a 2am Slack thread admits the migration was abandoned to hit launch.",
+    "confidence": 0.97,
+    "engineHint": "The Supabase mandate predates the Firebase commits by six months. The Slack admission explicitly ties the pivot to the launch deadline.",
+    "evidence": [
+      {
+        "id": "e-001a",
+        "source": "jira",
+        "author": "Priya Raman",
+        "timestamp": "2026-01-12T09:30:00Z",
+        "quote": "REL-201: All v2 services must use Supabase. Firebase is explicitly out of scope for the platform roadmap.",
+        "audience": "all",
+        "polarity": "supports",
+        "relevance": 0.96,
+        "channel": "JIRA-201 · platform mandate"
+      },
+      {
+        "id": "e-001b",
+        "source": "github",
+        "author": "Marcus Webb",
+        "timestamp": "2026-07-18T23:41:00Z",
+        "quote": "feat(api): move orders + auth to Firestore; remove Supabase client",
+        "audience": "junior",
+        "polarity": "contradicts",
+        "relevance": 0.99,
+        "channel": "PR #402 · 47 files",
+        "filePath": "services/api/firebase/client.ts",
+        "commit": "PR #402"
+      },
+      {
+        "id": "e-001c",
+        "source": "slack",
+        "author": "Dani Okafor",
+        "timestamp": "2026-07-19T02:14:00Z",
+        "quote": "We are not going to finish the Supabase migration before launch. I moved the remaining services to Firebase last night. Please do not put this in writing yet.",
+        "audience": "all",
+        "polarity": "contradicts",
+        "relevance": 0.94,
+        "channel": "#ops-urgent"
+      },
+      {
+        "id": "e-001d",
+        "source": "code",
+        "author": "Marcus Webb",
+        "timestamp": "2026-08-02T16:08:00Z",
+        "quote": "const db = getFirestore(app); // Supabase migration deferred until Q4",
+        "audience": "junior",
+        "polarity": "context",
+        "relevance": 0.88,
+        "channel": "services/api/db.ts:18",
+        "filePath": "services/api/db.ts",
+        "commit": "c7e91ab"
+      }
+    ],
+    "resolutions": [
+      {
+        "id": 1,
+        "label": "Firebase is canonical",
+        "description": "Ratify the production reality and rewrite the architecture mandate."
+      },
+      {
+        "id": 2,
+        "label": "Supabase is canonical",
+        "description": "Reopen the migration and scope a Firebase rollback."
+      },
+      {
+        "id": 3,
+        "label": "Dual-write, document both",
+        "description": "Keep Firebase live and document a time-boxed Supabase migration."
+      }
+    ],
+    "status": "open",
+    "impact": {
+      "budget": "Migration rework ≈ $48k",
+      "timeline": "Launch blocked · 3 sprints",
+      "risk": "SOC 2 scope invalidated"
+    },
+    "implementation": {
+      "owner": "Marcus Webb",
+      "repo": "relay-labs/core-api",
+      "branch": "feat/firebase-pivot",
+      "pr": "PR #402",
+      "files": [
+        "services/api/firebase/client.ts",
+        "services/api/db.ts",
+        "infra/supabase.tf"
+      ]
+    }
+  },
+  {
+    "id": "d-002",
+    "kind": "missing_info",
+    "severity": "high",
+    "area": "infra",
+    "title": "Ghost cron exports customer data to a personal bucket",
+    "claim": "A nightly customer export runs with no documented owner or alerting—and the only routing note points to the outgoing engineer’s personal AWS bucket.",
+    "confidence": 0.93,
+    "engineHint": "The runbook names the Data Platform team, but the cron target was changed last November and never reverted.",
+    "evidence": [
+      {
+        "id": "e-002a",
+        "source": "notion",
+        "author": "Priya Raman",
+        "timestamp": "2026-01-08T12:00:00Z",
+        "quote": "Nightly customer export writes to s3://relay-prod-exports and is owned by the Data Platform team.",
+        "audience": "all",
+        "polarity": "supports",
+        "relevance": 0.91,
+        "channel": "Notion · Data retention"
+      },
+      {
+        "id": "e-002b",
+        "source": "code",
+        "author": "Tobias Klein",
+        "timestamp": "2025-11-05T08:00:00Z",
+        "quote": "0 2 * * * /opt/relay/bin/export_customers.sh --bucket s3://tklein-personal-exports",
+        "audience": "junior",
+        "polarity": "contradicts",
+        "relevance": 0.98,
+        "channel": "/etc/cron.d/relay-export",
+        "filePath": "ops/cron/relay-export",
+        "commit": "9b1d4f0"
+      },
+      {
+        "id": "e-002c",
+        "source": "slack",
+        "author": "Tobias Klein",
+        "timestamp": "2026-06-27T17:22:00Z",
+        "quote": "I pointed the export at my own bucket while I debug the retention job. I am leaving Friday—someone should probably take this over.",
+        "audience": "all",
+        "polarity": "contradicts",
+        "relevance": 0.95,
+        "channel": "#ops-urgent"
+      },
+      {
+        "id": "e-002d",
+        "source": "slack",
+        "author": "Nadia Chen",
+        "timestamp": "2026-08-14T03:06:00Z",
+        "quote": "Does anyone own the 2am export? It failed three nights in a row and nobody got paged.",
+        "audience": "all",
+        "polarity": "context",
+        "relevance": 0.89,
+        "channel": "#eng-oncall"
+      }
+    ],
+    "resolutions": [
+      {
+        "id": 1,
+        "label": "Take ownership + rotate bucket",
+        "description": "Move exports back to the company S3 bucket and assign an owner."
+      },
+      {
+        "id": 2,
+        "label": "Decommission the export",
+        "description": "Confirm no consumers, then remove the cron and the bucket."
+      },
+      {
+        "id": 3,
+        "label": "Escalate to security",
+        "description": "Treat the personal bucket as a potential data-exfiltration incident."
+      }
+    ],
+    "status": "open",
+    "impact": {
+      "budget": "PII exposure ≈ $250k",
+      "timeline": "Audit finding in 9 days",
+      "risk": "Customer data leaves VPC"
+    },
+    "implementation": {
+      "owner": "Nadia Chen",
+      "repo": "relay-labs/infra",
+      "branch": "fix/export-ownership",
+      "pr": "PR #418",
+      "files": [
+        "ops/cron/relay-export",
+        "infra/s3/exports.tf",
+        "runbooks/data-export.md"
+      ]
+    }
+  },
+  {
+    "id": "d-003",
+    "kind": "hard_contradiction",
+    "severity": "critical",
+    "area": "security",
+    "title": "Security handbook says KMS; config ships a hardcoded password",
+    "claim": "The security handbook says all secrets live in AWS KMS, but the staging API ships a hardcoded database password—and an intern flagged it in Slack two weeks ago.",
+    "confidence": 0.99,
+    "engineHint": "The hardcoded value matches the staging password in the runbook. SEC-88 was closed as Done without a linked PR or deploy.",
+    "evidence": [
+      {
+        "id": "e-003a",
+        "source": "notion",
+        "author": "Priya Raman",
+        "timestamp": "2026-02-03T10:00:00Z",
+        "quote": "All production and staging secrets are stored in AWS KMS. No credentials may be committed to source control.",
+        "audience": "all",
+        "polarity": "supports",
+        "relevance": 0.95,
+        "channel": "Notion · Security handbook"
+      },
+      {
+        "id": "e-003b",
+        "source": "code",
+        "author": "Dani Okafor",
+        "timestamp": "2026-08-21T14:12:00Z",
+        "quote": "const DB_PASSWORD = ",
+        "redacted": "relay-staging-2024!",
+        "audience": "junior",
+        "polarity": "contradicts",
+        "relevance": 0.99,
+        "channel": "services/api/config.ts:41",
+        "filePath": "services/api/config.ts",
+        "commit": "a91f3c2"
+      },
+      {
+        "id": "e-003c",
+        "source": "slack",
+        "author": "Iris Park",
+        "timestamp": "2026-10-27T09:18:00Z",
+        "quote": "I found a database password in config.ts while onboarding. Is that supposed to be there? It matches the staging runbook.",
+        "audience": "all",
+        "polarity": "contradicts",
+        "relevance": 0.97,
+        "channel": "#security"
+      },
+      {
+        "id": "e-003d",
+        "source": "jira",
+        "author": "Nadia Chen",
+        "timestamp": "2026-10-28T11:40:00Z",
+        "quote": "SEC-88 marked Done: “migrate staging secrets to KMS.” No linked PR or deploy found.",
+        "audience": "all",
+        "polarity": "context",
+        "relevance": 0.9,
+        "channel": "SEC-88 · security"
+      }
+    ],
+    "resolutions": [
+      {
+        "id": 1,
+        "label": "Rotate + move to KMS now",
+        "description": "Rotate the staging credential, purge git history, and finish the KMS migration."
+      },
+      {
+        "id": 2,
+        "label": "Rotate only, document exception",
+        "description": "Rotate the password and accept the code change as a follow-up."
+      },
+      {
+        "id": 3,
+        "label": "Escalate as an incident",
+        "description": "Open a security incident and freeze the release until remediated."
+      }
+    ],
+    "status": "open",
+    "impact": {
+      "budget": "Breach remediation ≈ $1.2M",
+      "timeline": "Security review in 48 hours",
+      "risk": "Hardcoded prod-adjacent secret"
+    },
+    "implementation": {
+      "owner": "Nadia Chen",
+      "repo": "relay-labs/core-api",
+      "branch": "fix/kms-staging-secret",
+      "pr": "PR #421",
+      "files": [
+        "services/api/config.ts",
+        "infra/kms/staging.tf",
+        "docs/security/secrets.md"
+      ]
+    }
+  },
+  {
+    "id": "d-004",
+    "kind": "hard_contradiction",
+    "severity": "high",
+    "area": "billing",
+    "title": "Billing runbook promises 5 retries; handler ships 3",
+    "claim": "The billing runbook promises five retries with exponential backoff, but the deployed Stripe handler uses three fixed-delay retries—and the discrepancy landed after PR #412.",
+    "confidence": 0.9,
+    "engineHint": "The runbook predates the handler refactor. The code comment marks the change as temporary.",
+    "evidence": [
+      {
+        "id": "e-004a",
+        "source": "notion",
+        "author": "Maya Chen",
+        "timestamp": "2026-01-14T11:00:00Z",
+        "quote": "Webhook failures retry 5 times with exponential backoff (1m, 5m, 30m, 2h, 12h).",
+        "audience": "all",
+        "polarity": "supports",
+        "relevance": 0.92,
+        "channel": "Notion · Billing runbook"
+      },
+      {
+        "id": "e-004b",
+        "source": "github",
+        "author": "Sam Ortiz",
+        "timestamp": "2026-07-22T13:25:00Z",
+        "quote": "MAX_RETRIES = 3; RETRY_DELAY_MS = 60_000  # simplified, backoff dropped for now",
+        "audience": "junior",
+        "polarity": "contradicts",
+        "relevance": 0.97,
+        "channel": "PR #412 · billing/webhook.ts",
+        "filePath": "services/billing/webhook.ts",
+        "commit": "PR #412"
+      },
+      {
+        "id": "e-004c",
+        "source": "slack",
+        "author": "Maya Chen",
+        "timestamp": "2026-08-09T16:35:00Z",
+        "quote": "Are we still seeing failed renewals? Finance says a few accounts went dark after the Stripe outage.",
+        "audience": "all",
+        "polarity": "contradicts",
+        "relevance": 0.88,
+        "channel": "#billing-ops"
+      },
+      {
+        "id": "e-004d",
+        "source": "jira",
+        "author": "Maya Chen",
+        "timestamp": "2026-08-10T09:00:00Z",
+        "quote": "BILL-77: Finance reports three renewals missing after the Stripe outage. Still investigating retry behavior.",
+        "audience": "all",
+        "polarity": "context",
+        "relevance": 0.86,
+        "channel": "BILL-77 · finance"
+      }
+    ],
+    "resolutions": [
+      {
+        "id": 1,
+        "label": "Restore 5x backoff",
+        "description": "Revert to the documented retry policy and replay missed events."
+      },
+      {
+        "id": 2,
+        "label": "Update runbook to 3x",
+        "description": "Accept the simplified handler and correct the documentation."
+      },
+      {
+        "id": 3,
+        "label": "Needs a billing decision",
+        "description": "Escalate to finance and the incoming owner before changing behavior."
+      }
+    ],
+    "status": "open",
+    "impact": {
+      "budget": "Failed renewals ≈ $18k/mo",
+      "timeline": "Billing audit in 3 weeks",
+      "risk": "Silent revenue leakage"
+    },
+    "implementation": {
+      "owner": "Sam Ortiz",
+      "repo": "relay-labs/billing",
+      "branch": "fix/webhook-retries",
+      "pr": "PR #412",
+      "files": [
+        "services/billing/webhook.ts",
+        "docs/runbooks/billing.md",
+        "tests/billing/retry.test.ts"
+      ]
+    }
+  },
+  {
+    "id": "d-005",
+    "kind": "hard_contradiction",
+    "severity": "medium",
+    "area": "developer-experience",
+    "title": "Three Node versions across CI, engines, and onboarding",
+    "claim": "CI pins Node 18, package.json requires Node 20, and the onboarding guide tells new hires to install Node 22—so every environment disagrees.",
+    "confidence": 0.84,
+    "engineHint": "Three sources, three versions. package.json is enforced at install time; CI is the oldest reference.",
+    "evidence": [
+      {
+        "id": "e-005a",
+        "source": "github",
+        "author": "CI Bot",
+        "timestamp": "2026-02-10T09:00:00Z",
+        "quote": "node-version: 18.x",
+        "audience": "junior",
+        "polarity": "supports",
+        "relevance": 0.9,
+        "channel": ".github/workflows/ci.yml",
+        "filePath": ".github/workflows/ci.yml",
+        "commit": "ci@18.x"
+      },
+      {
+        "id": "e-005b",
+        "source": "code",
+        "author": "Sam Ortiz",
+        "timestamp": "2026-05-30T12:10:00Z",
+        "quote": "\"engines\": { \"node\": \">=20\" }",
+        "audience": "junior",
+        "polarity": "contradicts",
+        "relevance": 0.95,
+        "channel": "package.json",
+        "filePath": "package.json",
+        "commit": "e4b7c10"
+      },
+      {
+        "id": "e-005c",
+        "source": "notion",
+        "author": "Maya Chen",
+        "timestamp": "2026-08-01T10:30:00Z",
+        "quote": "Install Node 22 before running the dev server. Node 18 is no longer supported.",
+        "audience": "all",
+        "polarity": "contradicts",
+        "relevance": 0.88,
+        "channel": "Notion · Engineering onboarding"
+      },
+      {
+        "id": "e-005d",
+        "source": "slack",
+        "author": "Iris Park",
+        "timestamp": "2026-08-28T08:47:00Z",
+        "quote": "My first build failed on Node 18. The onboarding doc said 22, CI says 18. Which one is real?",
+        "audience": "all",
+        "polarity": "context",
+        "relevance": 0.82,
+        "channel": "#eng-help"
+      }
+    ],
+    "resolutions": [
+      {
+        "id": 1,
+        "label": "Standardise on Node 22",
+        "description": "Bump CI and engines; keep onboarding as the source of truth."
+      },
+      {
+        "id": 2,
+        "label": "Standardise on Node 20",
+        "description": "Align CI and onboarding to the current LTS."
+      },
+      {
+        "id": 3,
+        "label": "Pin all three, document matrix",
+        "description": "Support a tested version matrix and remove ambiguity."
+      }
+    ],
+    "status": "open",
+    "impact": {
+      "budget": "Build drift ≈ 6 eng hrs/wk",
+      "timeline": "Release in 10 days",
+      "risk": "CI/runtime mismatch"
+    },
+    "implementation": {
+      "owner": "Sam Ortiz",
+      "repo": "relay-labs/core-api",
+      "branch": "chore/node-22",
+      "pr": "PR #425",
+      "files": [
+        ".github/workflows/ci.yml",
+        "package.json",
+        "docs/onboarding.md"
+      ]
+    }
+  },
+  {
+    "id": "d-006",
+    "kind": "missing_info",
+    "severity": "high",
+    "area": "release-engineering",
+    "title": "v2 rollback plan referenced but never written",
+    "claim": "The v2 release notes claim a rollback plan is in place, but no runbook, script, or owner exists—and Slack shows the on-call engineer cannot find it.",
+    "confidence": 0.81,
+    "engineHint": "Referenced in the release email and Slack; no linked document or script exists in the repo.",
+    "evidence": [
+      {
+        "id": "e-006a",
+        "source": "email",
+        "author": "Priya Raman",
+        "timestamp": "2026-04-09T08:30:00Z",
+        "quote": "Rollback plan is in place, see the release checklist before we cut v2.",
+        "audience": "all",
+        "polarity": "supports",
+        "relevance": 0.76,
+        "channel": "Re: v2 release readiness"
+      },
+      {
+        "id": "e-006b",
+        "source": "slack",
+        "author": "Dev Patel",
+        "timestamp": "2026-04-09T09:12:00Z",
+        "quote": "Which checklist? I cannot find a rollback section anywhere. We do not have a script for this.",
+        "audience": "all",
+        "polarity": "contradicts",
+        "relevance": 0.92,
+        "channel": "#release-v2"
+      },
+      {
+        "id": "e-006c",
+        "source": "github",
+        "author": "CI Bot",
+        "timestamp": "2026-09-02T18:20:00Z",
+        "quote": "No files matched \"rollback\" under docs/releases/v2 or scripts/release.",
+        "audience": "junior",
+        "polarity": "contradicts",
+        "relevance": 0.87,
+        "channel": "repo search · core-api",
+        "filePath": "docs/releases/v2.md",
+        "commit": "v2.0.0-rc3"
+      },
+      {
+        "id": "e-006d",
+        "source": "jira",
+        "author": "Nadia Chen",
+        "timestamp": "2026-09-03T10:05:00Z",
+        "quote": "REL-260: “Write v2 rollback runbook” is still in Backlog, unassigned.",
+        "audience": "all",
+        "polarity": "context",
+        "relevance": 0.84,
+        "channel": "REL-260 · release"
+      }
+    ],
+    "resolutions": [
+      {
+        "id": 1,
+        "label": "Write the runbook before launch",
+        "description": "Document and test rollback steps; assign an owner."
+      },
+      {
+        "id": 2,
+        "label": "Delegate to SRE",
+        "description": "Create a release-blocking ticket for the SRE team."
+      },
+      {
+        "id": 3,
+        "label": "Ship behind a feature flag",
+        "description": "Accept the risk with a documented flag-off path."
+      }
+    ],
+    "status": "open",
+    "impact": {
+      "budget": "Incident exposure ≈ $30k+",
+      "timeline": "v2 launch in 5 days",
+      "risk": "No recovery path"
+    },
+    "implementation": {
+      "owner": "Dev Patel",
+      "repo": "relay-labs/core-api",
+      "branch": "docs/v2-rollback",
+      "pr": "PR #428",
+      "files": [
+        "docs/releases/v2.md",
+        "docs/runbooks/rollback.md",
+        "scripts/release/rollback.sh"
+      ]
+    }
+  }
+]
