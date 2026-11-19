@@ -3,11 +3,12 @@
 import {
   Briefcase,
   CalendarClock,
+  CircleDot,
   FolderGit2,
   GitBranch,
   GitPullRequest,
   ShieldAlert,
-  Terminal,
+  Sparkles,
   UserRound,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -20,12 +21,18 @@ const SEVERITY_COLOR: Record<Severity, string> = {
   medium: '#eab308',
 };
 
-const KIND_LABEL: Record<Doubt['kind'], string> = {
-  hard_contradiction: 'Conflict',
-  missing_info: 'Missing info',
+const SEVERITY_LABEL: Record<Severity, string> = {
+  critical: 'Critical',
+  high: 'High',
+  medium: 'Medium',
 };
 
-function ImpactCard({
+const KIND_LABEL: Record<Doubt['kind'], string> = {
+  hard_contradiction: 'Contradiction',
+  missing_info: 'Missing information',
+};
+
+function MetaItem({
   icon,
   label,
   value,
@@ -35,57 +42,71 @@ function ImpactCard({
   value: string;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-800/80 bg-zinc-950/40 p-3">
-      <div className="flex items-center gap-1.5 text-zinc-500">
-        {icon}
-        <span className="font-mono text-[9px] uppercase tracking-[0.14em]">
-          {label}
-        </span>
-      </div>
-      <p className="mt-1.5 text-[12px] leading-snug text-zinc-300">{value}</p>
-    </div>
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <span className="shrink-0 text-zinc-500">{icon}</span>
+      <span className="shrink-0 font-mono text-[8.5px] uppercase tracking-[0.16em] text-zinc-600">
+        {label}
+      </span>
+      <span className="truncate text-[11.5px] text-zinc-300">{value}</span>
+    </span>
   );
 }
 
+/**
+ * Part 1 of the reading flow: what is wrong, in one breath. The headline is the
+ * contradiction itself — never a label like "The claim".
+ */
 export function ClaimPanel({ doubt, role }: { doubt: Doubt; role: Role }) {
   const accent = SEVERITY_COLOR[doubt.severity];
+  const confidence = Math.round(doubt.confidence * 100);
 
   return (
     <section
-      aria-label="Claim under review"
-      className="rounded-xl border border-zinc-800/80 bg-zinc-900/30 p-5 sm:p-6"
-      style={{ borderTopColor: accent, borderTopWidth: 2 }}
+      aria-label="The contradiction"
+      data-guide="claim"
+      className="flex flex-col"
     >
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span
-          className="rounded-md px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider"
-          style={{ color: accent, backgroundColor: `${accent}1a` }}
+          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[8.5px] uppercase tracking-[0.14em]"
+          style={{ color: accent, backgroundColor: `${accent}18` }}
         >
-          {doubt.severity}
+          <span
+            className="size-1.5 rounded-full"
+            style={{ backgroundColor: accent }}
+            aria-hidden
+          />
+          {SEVERITY_LABEL[doubt.severity]}
         </span>
-        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+        <span className="font-mono text-[8.5px] uppercase tracking-[0.16em] text-zinc-500">
           {KIND_LABEL[doubt.kind]}
         </span>
-        <span className="text-zinc-700" aria-hidden>
-          ·
-        </span>
-        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+        <span className="size-1 rounded-full bg-zinc-700" aria-hidden />
+        <span className="font-mono text-[8.5px] uppercase tracking-[0.16em] text-zinc-500">
           {doubt.area}
         </span>
-        <span className="ml-auto rounded-md border border-zinc-800 bg-zinc-950/50 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-zinc-500">
-          {role === 'manager' ? 'Executive lens' : 'Developer lens'}
+        {doubt.origin && doubt.origin !== 'seed' && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-sky-400/[0.09] px-2 py-0.5 font-mono text-[8px] uppercase tracking-[0.12em] text-sky-300 ring-1 ring-sky-400/20">
+            <GitBranch className="size-2.5" aria-hidden />
+            {doubt.origin}
+          </span>
+        )}
+        <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[0.14em] text-zinc-500">
+          <span className="text-zinc-600">confidence</span>
+          <span className="tabular-nums text-zinc-300">{confidence}%</span>
         </span>
       </div>
 
-      <p className="mt-6 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">
-        The claim
-      </p>
-      <h1 className="mt-2.5 text-balance text-[21px] font-medium leading-[1.4] tracking-[-0.02em] text-zinc-100 sm:text-[25px]">
-        {doubt.claim}
+      <h1 className="mt-4 text-balance text-[27px] font-semibold leading-[1.12] tracking-[-0.035em] text-zinc-50 sm:text-[34px]">
+        {doubt.title}
       </h1>
 
+      <p className="mt-4 max-w-2xl text-[14.5px] leading-7 text-zinc-400">
+        {doubt.claim}
+      </p>
+
       {role === 'manager' ? (
-        <div className="mt-5 grid gap-2 sm:grid-cols-3">
+        <div className="mt-7 grid gap-2 sm:grid-cols-3">
           <ImpactCard
             icon={<Briefcase className="size-3" aria-hidden />}
             label="Budget"
@@ -103,49 +124,77 @@ export function ClaimPanel({ doubt, role }: { doubt: Doubt; role: Role }) {
           />
         </div>
       ) : doubt.implementation ? (
-        <div className="mt-5 rounded-lg border border-zinc-800/80 bg-zinc-950/40 p-4">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-zinc-400">
-            <span className="inline-flex items-center gap-1.5">
-              <UserRound className="size-3 text-zinc-500" aria-hidden />
-              {doubt.implementation.owner}
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <FolderGit2 className="size-3 text-zinc-500" aria-hidden />
-              <code className="font-mono text-[10px] text-zinc-400">
-                {doubt.implementation.repo}
-              </code>
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <GitBranch className="size-3 text-zinc-500" aria-hidden />
-              <code className="font-mono text-[10px] text-zinc-400">
-                {doubt.implementation.branch}
-              </code>
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <GitPullRequest className="size-3 text-zinc-500" aria-hidden />
-              <code className="font-mono text-[10px] text-zinc-400">
-                {doubt.implementation.pr}
-              </code>
-            </span>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {doubt.implementation.files.map((file) => (
-              <code
-                key={file}
-                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 font-mono text-[10px] text-zinc-300"
-              >
-                <Terminal className="size-3 text-zinc-500" aria-hidden />
-                {file}
-              </code>
-            ))}
-          </div>
+        <div className="mt-7 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-white/[0.06] pt-4">
+          <MetaItem
+            icon={<UserRound className="size-3" aria-hidden />}
+            label="owner"
+            value={doubt.implementation.owner}
+          />
+          <MetaItem
+            icon={<FolderGit2 className="size-3" aria-hidden />}
+            label="repo"
+            value={doubt.implementation.repo}
+          />
+          <MetaItem
+            icon={<GitPullRequest className="size-3" aria-hidden />}
+            label="pr"
+            value={doubt.implementation.pr}
+          />
+          <span className="inline-flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[0.14em] text-zinc-600">
+            <CircleDot className="size-2.5" aria-hidden />
+            {doubt.implementation.files.length} files in scope
+          </span>
         </div>
       ) : (
-        <p className="mt-5 rounded-lg border border-dashed border-zinc-800 px-3 py-2 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-600">
-          implementation targets withheld by API
+        <p className="mt-7 border-t border-white/[0.06] pt-4 font-mono text-[8.5px] uppercase tracking-[0.16em] text-zinc-600">
+          implementation targets withheld from this lens
         </p>
       )}
+
+      {doubt.synthesis &&
+        (doubt.synthesis.injectedCount > 0 ||
+          Math.abs(doubt.synthesis.delta) > 0.0005) && (
+          <div className="mt-5 flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-2xl bg-amber-400/[0.05] px-3.5 py-2.5 ring-1 ring-amber-400/15">
+            <Sparkles className="size-3 text-amber-300" aria-hidden />
+            <span className="font-mono text-[8px] uppercase tracking-[0.16em] text-amber-200/90">
+              live signal
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+              {doubt.synthesis.injectedCount} injected
+            </span>
+            <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-[10px] tabular-nums">
+              <span className="text-zinc-500">
+                {Math.round(doubt.synthesis.baseConfidence * 100)}%
+              </span>
+              <span className="text-zinc-600">→</span>
+              <span className="text-amber-200">
+                {Math.round(doubt.synthesis.confidence * 100)}%
+              </span>
+            </span>
+          </div>
+        )}
     </section>
+  );
+}
+
+function ImpactCard({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-2xl bg-white/[0.025] px-3.5 py-3 ring-1 ring-white/[0.05]">
+      <div className="flex items-center gap-1.5 text-zinc-500">
+        {icon}
+        <span className="font-mono text-[8px] uppercase tracking-[0.14em]">
+          {label}
+        </span>
+      </div>
+      <p className="mt-1.5 text-[11.5px] leading-snug text-zinc-300">{value}</p>
+    </div>
   );
 }

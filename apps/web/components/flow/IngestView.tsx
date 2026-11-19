@@ -21,8 +21,13 @@ import type { LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { useTriage } from '@/stores/triage';
+import { RelayLogo } from '@/components/brand/RelayLogo';
+import {
+  KEYNOTE_SCAN_MS,
+  isKeynoteRunning,
+} from '@/components/triage/JudgeWalkthrough';
 
-const DURATION_MS = 4600;
+const DURATION_MS = 6500;
 
 const SOURCES: {
   name: string;
@@ -95,8 +100,16 @@ export function IngestView() {
   const finishIngest = useTriage((s) => s.finishIngest);
   const ingestStatus = useTriage((s) => s.ingestStatus);
   const meta = useTriage((s) => s.meta);
+  const lastIngest = useTriage((s) => s.lastIngest);
+  const liveIngest = lastIngest?.ingestion ?? null;
   const error = useTriage((s) => s.error);
   const [progress, setProgress] = useState(0);
+
+  // During the judge keynote the scan is held longer, so every counter can be
+  // narrated. A normal visitor keeps the brisk 6.5s sequence.
+  const [durationMs] = useState(() =>
+    isKeynoteRunning() ? KEYNOTE_SCAN_MS : DURATION_MS,
+  );
 
   // The cinematic scan and the real API request run in parallel. The view only
   // advances when *both* the animation and the server response are complete.
@@ -109,13 +122,13 @@ export function IngestView() {
     const id = window.setInterval(() => {
       const next = Math.min(
         100,
-        Math.round(((performance.now() - started) / DURATION_MS) * 100),
+        Math.round(((performance.now() - started) / durationMs) * 100),
       );
       setProgress(next);
       if (next >= 100) window.clearInterval(id);
     }, 70);
     return () => window.clearInterval(id);
-  }, []);
+  }, [durationMs]);
 
   const ready = ingestStatus === 'ready';
   const failed = ingestStatus === 'error';
@@ -123,7 +136,8 @@ export function IngestView() {
 
   useEffect(() => {
     if (!done) return;
-    const t = window.setTimeout(() => void finishIngest(), 900);
+    // Long enough to read the confirmation, short enough to feel decisive.
+    const t = window.setTimeout(() => void finishIngest(), 1900);
     return () => window.clearTimeout(t);
   }, [done, finishIngest]);
 
@@ -159,28 +173,20 @@ export function IngestView() {
     .slice(-8);
 
   return (
-    <div className="relative flex min-h-dvh flex-col overflow-hidden bg-zinc-950 text-zinc-100 antialiased selection:bg-zinc-700/60">
-      <div className="relay-grid pointer-events-none absolute inset-0 opacity-50" />
-      <div className="pointer-events-none absolute -top-56 left-1/3 size-[640px] rounded-full bg-emerald-500/[0.08] blur-[140px]" />
-      <div className="pointer-events-none absolute -bottom-56 right-0 size-[520px] rounded-full bg-sky-500/[0.06] blur-[140px]" />
+    <div className="relative flex min-h-dvh flex-col overflow-hidden bg-[#040406] text-zinc-100 antialiased selection:bg-zinc-700/60">
+      <div className="relay-grid pointer-events-none absolute inset-0 opacity-30" />
+      <div className="pointer-events-none absolute -top-56 left-1/3 size-[640px] rounded-full bg-emerald-500/[0.06] blur-[140px]" />
+      <div className="pointer-events-none absolute -bottom-56 right-0 size-[520px] rounded-full bg-sky-500/[0.05] blur-[140px]" />
+      <div
+        className="pointer-events-none absolute inset-0 bg-black/35 backdrop-blur-[3px]"
+        aria-hidden
+      />
 
       <header className="relative z-20 mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-5 sm:px-8">
-        <div className="flex items-center gap-3">
-          <div className="grid size-8 place-items-center rounded-lg bg-zinc-100 font-mono text-[11px] font-bold text-zinc-950">
-            R
-          </div>
-          <div className="leading-tight">
-            <p className="text-[13px] font-semibold tracking-tight text-zinc-100">
-              Relay
-            </p>
-            <p className="font-mono text-[8px] uppercase tracking-[0.18em] text-zinc-500">
-              ingestion
-            </p>
-          </div>
-        </div>
+        <RelayLogo size="sm" subtitle="ingestion" />
 
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-800/80 bg-zinc-900/50 px-3 py-1 font-mono text-[8.5px] uppercase tracking-[0.16em] text-zinc-400">
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-white/[0.04] px-2.5 py-1.5 font-mono text-[8px] uppercase tracking-[0.16em] text-zinc-400 ring-1 ring-white/[0.06] sm:px-3 sm:text-[8.5px]">
             <Activity
               className={[
                 'size-3',
@@ -188,18 +194,29 @@ export function IngestView() {
               ].join(' ')}
               aria-hidden
             />
-            {failed
-              ? 'api unavailable'
-              : done
-                ? 'scan complete'
-                : progress >= 100
-                  ? 'securing handshake'
-                  : 'reading workspace'}
+            <span className="hidden sm:inline">
+              {failed
+                ? 'api unavailable'
+                : done
+                  ? 'scan complete'
+                  : progress >= 100
+                    ? 'securing handshake'
+                    : 'reading workspace'}
+            </span>
+            <span className="sm:hidden">
+              {failed
+                ? 'offline'
+                : done
+                  ? 'complete'
+                  : progress >= 100
+                    ? 'handshake'
+                    : 'reading'}
+            </span>
           </span>
           <button
             type="button"
             onClick={() => void finishIngest()}
-            className="inline-flex items-center gap-1 rounded-full border border-zinc-800/80 bg-zinc-900/50 px-3 py-1 font-mono text-[8.5px] uppercase tracking-[0.16em] text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-200"
+            className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-white/[0.03] px-2.5 py-1.5 font-mono text-[8px] uppercase tracking-[0.16em] text-zinc-500 ring-1 ring-white/[0.05] transition hover:bg-white/[0.06] hover:text-zinc-200 sm:px-3 sm:text-[8.5px]"
           >
             skip scan
             <ArrowRight className="size-3" aria-hidden />
@@ -226,7 +243,7 @@ export function IngestView() {
             them for claims that don&apos;t agree.
           </p>
 
-          <div className="mt-7 overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-900/30 p-1.5">
+          <div className="mt-8 overflow-hidden rounded-[22px] bg-white/[0.022] p-1.5 ring-1 ring-white/[0.05] backdrop-blur-xl">
             {SOURCES.map(
               ({ name, detail, icon: Icon, color, start, span }, index) => {
                 const p = progressFor(progress, start, span);
@@ -236,14 +253,15 @@ export function IngestView() {
                 return (
                   <div
                     key={name}
+                    data-guide={name === 'GitHub' ? 'ingest-github' : undefined}
                     className={[
-                      'flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors',
-                      active ? 'bg-zinc-800/30' : '',
+                      'flex items-center gap-3 rounded-2xl px-3 py-2.5 transition-colors duration-500',
+                      active ? 'bg-white/[0.045]' : '',
                     ].join(' ')}
                     style={{ transitionDelay: `${index * 40}ms` }}
                   >
                     <span
-                      className="grid size-9 shrink-0 place-items-center rounded-lg border border-zinc-800 bg-zinc-950"
+                      className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/[0.05]"
                       style={{ color }}
                     >
                       <Icon className="size-4" aria-hidden />
@@ -258,7 +276,7 @@ export function IngestView() {
                           className={[
                             'font-mono text-[8px] uppercase tracking-[0.14em]',
                             complete
-                              ? 'text-emerald-400'
+                              ? 'text-emerald-400/90'
                               : active
                                 ? 'text-zinc-300'
                                 : 'text-zinc-600',
@@ -268,11 +286,13 @@ export function IngestView() {
                         </span>
                       </div>
                       <p className="mt-0.5 truncate font-mono text-[8.5px] text-zinc-500">
-                        {detail}
+                        {name === 'GitHub' && liveIngest
+                          ? `${liveIngest.fullName} · ${liveIngest.commitsRead} commits`
+                          : detail}
                       </p>
-                      <div className="mt-2 h-0.5 overflow-hidden rounded-full bg-zinc-800">
+                      <div className="mt-2 h-0.5 overflow-hidden rounded-full bg-white/[0.06]">
                         <div
-                          className="h-full rounded-full transition-[width] duration-200 ease-out"
+                          className="h-full rounded-full transition-[width] duration-500 ease-out"
                           style={{ width: `${p}%`, backgroundColor: color }}
                         />
                       </div>
@@ -302,17 +322,19 @@ export function IngestView() {
             )}
           </div>
 
-          <div className="mt-4">
-            <div className="flex items-center justify-between font-mono text-[8.5px] uppercase tracking-[0.16em] text-zinc-500">
+          <div className="mt-5">
+            <div className="flex items-end justify-between font-mono text-[8.5px] uppercase tracking-[0.16em] text-zinc-500">
               <span className="inline-flex items-center gap-1.5">
                 <Sparkles className="size-3 text-emerald-400/80" aria-hidden />
                 {done ? 'scan complete' : 'extracting contradictions'}
               </span>
-              <span className="text-zinc-300">{progress}%</span>
+              <span className="text-[11px] tabular-nums text-zinc-200">
+                {progress}%
+              </span>
             </div>
-            <div className="mt-2 h-1 overflow-hidden rounded-full bg-zinc-800">
+            <div className="mt-2 h-[3px] overflow-hidden rounded-full bg-white/[0.06]">
               <div
-                className="h-full rounded-full bg-linear-to-r from-emerald-500 via-emerald-400 to-sky-400 transition-[width] duration-150 ease-out"
+                className="h-full rounded-full bg-linear-to-r from-emerald-500 via-emerald-400 to-sky-400 transition-[width] duration-500 ease-out"
                 style={{ width: `${progress}%` }}
               />
             </div>
@@ -328,12 +350,15 @@ export function IngestView() {
         </section>
 
         <section className="animate-in fade-in slide-in-from-bottom-3 duration-700 [animation-delay:120ms]">
-          <div className="relative overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-900/30">
+          <div
+            className="relative overflow-hidden rounded-[22px] bg-white/[0.022] shadow-[0_50px_140px_-60px_rgba(0,0,0,1)] ring-1 ring-white/[0.05] backdrop-blur-xl"
+            data-guide="live-extraction"
+          >
             <div className="scan-sweep pointer-events-none absolute inset-x-0 top-0 h-24 bg-linear-to-b from-transparent via-emerald-500/[0.1] to-transparent">
               <div className="absolute inset-x-0 bottom-0 h-px bg-emerald-400/60 shadow-[0_0_20px_rgba(16,185,129,0.8)]" />
             </div>
 
-            <div className="relative flex items-center justify-between gap-3 border-b border-zinc-800/70 px-4 py-3">
+            <div className="relative flex items-center justify-between gap-3 px-4 py-3.5">
               <div className="flex items-center gap-2">
                 <Terminal className="size-3.5 text-zinc-500" aria-hidden />
                 <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-zinc-500">
@@ -346,51 +371,138 @@ export function IngestView() {
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-px bg-zinc-800/60">
+            <div className="grid grid-cols-2 gap-px border-t border-white/[0.05] bg-white/[0.05]">
               {[
-                { label: 'messages parsed', value: compact(Math.round(4812 * scanned)) },
-                { label: 'commits read', value: compact(Math.round(2861 * scanned)) },
-                { label: 'docs indexed', value: compact(Math.round(31 * scanned)) },
-                { label: 'contradictions', value: String(contradictions).padStart(2, '0') },
+                {
+                  label: 'files scanned',
+                  value: liveIngest
+                    ? compact(liveIngest.filesScanned)
+                    : compact(Math.round(312 * scanned)),
+                },
+                {
+                  label: 'commits read',
+                  value: liveIngest
+                    ? compact(liveIngest.commitsRead)
+                    : compact(Math.round(2861 * scanned)),
+                },
+                {
+                  label: 'findings',
+                  value: String(
+                    liveIngest ? liveIngest.findings : contradictions,
+                  ).padStart(2, '0'),
+                },
+                {
+                  label: 'sources indexed',
+                  value: meta ? String(meta.sources) : String(Math.round(31 * scanned)),
+                },
               ].map((stat) => (
-                <div key={stat.label} className="bg-zinc-950/70 px-4 py-3.5">
-                  <p className="font-mono text-[19px] font-medium tracking-tight text-zinc-100">
+                <div key={stat.label} className="bg-[#06070a] px-4 py-4">
+                  <p className="font-mono text-[23px] font-medium tabular-nums leading-none tracking-tight text-zinc-100">
                     {stat.value}
                   </p>
-                  <p className="mt-0.5 font-mono text-[8px] uppercase tracking-[0.14em] text-zinc-500">
+                  <p className="mt-1.5 font-mono text-[8px] uppercase tracking-[0.14em] text-zinc-600">
                     {stat.label}
                   </p>
                 </div>
               ))}
             </div>
 
-            <div className="relative h-[228px] overflow-hidden px-4 py-3 font-mono text-[9.5px] leading-6">
-              {visibleLog.map((line) => (
-                <div
-                  key={`${line.at}-${line.text}`}
-                  className="animate-in fade-in slide-in-from-bottom-1 flex gap-2 duration-300"
-                >
-                  <span className="shrink-0 text-zinc-700">
-                    {String(line.at).padStart(3, '0')}
-                  </span>
-                  <span
-                    className="w-[52px] shrink-0 uppercase tracking-wider"
-                    style={{ color: line.color }}
+            <div className="relative h-[240px] overflow-hidden px-4 py-3 font-mono text-[9.5px] leading-6">
+              <div
+                className={[
+                  'transition-opacity duration-300',
+                  done ? 'opacity-0' : 'opacity-100',
+                ].join(' ')}
+              >
+                {visibleLog.map((line) => (
+                  <div
+                    key={`${line.at}-${line.text}`}
+                    className="animate-in fade-in flex gap-2 duration-500"
                   >
-                    {line.source}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-zinc-400">
-                    {line.text}
-                  </span>
+                    <span className="shrink-0 text-zinc-700">
+                      {String(line.at).padStart(3, '0')}
+                    </span>
+                    <span
+                      className="w-[52px] shrink-0 uppercase tracking-wider"
+                      style={{ color: line.color }}
+                    >
+                      {line.source}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-zinc-400">
+                      {line.text}
+                    </span>
+                  </div>
+                ))}
+                {visibleLog.length === 0 && (
+                  <p className="text-zinc-600">establishing secure handshake…</p>
+                )}
+              </div>
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-linear-to-t from-[#06070a]/95 to-transparent" />
+
+              {/*
+                The closing veil sits over the log only. The live numbers above
+                stay at full contrast — they are the thing worth watching.
+              */}
+              {done && (
+                <div className="absolute inset-0 z-20 grid place-items-center bg-[#05060a]/95 backdrop-blur-md animate-in fade-in duration-300">
+                  <div className="text-center">
+                    <div className="seal-in mx-auto grid size-11 place-items-center rounded-full border border-emerald-500/35 bg-emerald-500/[0.08] text-emerald-400">
+                      <Check className="size-4" aria-hidden />
+                    </div>
+                    <p className="mt-3 text-[13px] font-medium text-zinc-100">
+                      {meta?.doubts ?? 0} doubts found
+                    </p>
+                    <p className="mt-1 font-mono text-[8px] uppercase tracking-[0.18em] text-zinc-500">
+                      server board ready · opening triage
+                    </p>
+                  </div>
                 </div>
-              ))}
-              {visibleLog.length === 0 && (
-                <p className="text-zinc-600">establishing secure handshake…</p>
               )}
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-linear-to-t from-zinc-900/90 to-transparent" />
+
+              {progress >= 100 && !ready && !failed && (
+                <div className="absolute inset-0 z-20 grid place-items-center bg-[#05060a]/95 backdrop-blur-md animate-in fade-in duration-500">
+                  <div className="text-center">
+                    <Loader2
+                      className="mx-auto size-6 animate-spin text-emerald-400/90"
+                      aria-hidden
+                    />
+                    <p className="mt-3 text-[13px] font-medium text-zinc-100">
+                      Waiting for the API
+                    </p>
+                    <p className="mt-1 font-mono text-[8px] uppercase tracking-[0.18em] text-zinc-500">
+                      signed session · role-scoped payload
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {failed && (
+                <div className="absolute inset-0 z-20 grid place-items-center bg-[#05060a]/95 backdrop-blur-md animate-in fade-in duration-500">
+                  <div className="mx-5 max-w-xs text-center">
+                    <AlertTriangle
+                      className="mx-auto size-6 text-red-400"
+                      aria-hidden
+                    />
+                    <p className="mt-2.5 text-[13px] font-medium text-zinc-100">
+                      The backend did not answer
+                    </p>
+                    <p className="mt-1 max-h-12 overflow-hidden text-[10.5px] leading-relaxed text-zinc-500">
+                      {error ?? 'Unknown API error'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void loadBoard()}
+                      className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] px-3 py-1.5 font-mono text-[8.5px] uppercase tracking-[0.14em] text-zinc-200 ring-1 ring-white/[0.08] transition hover:bg-white/[0.1]"
+                    >
+                      <RefreshCw className="size-3" aria-hidden />
+                      Retry API
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="flex items-center justify-between border-t border-zinc-800/70 px-4 py-2.5">
+            <div className="flex items-center justify-between border-t border-white/[0.05] px-4 py-3">
               <span className="inline-flex items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.14em] text-zinc-600">
                 <ShieldCheck className="size-3 text-emerald-400/70" aria-hidden />
                 zero-retention scan
@@ -401,68 +513,10 @@ export function IngestView() {
                   : 'awaiting /api/session'}
               </span>
             </div>
-
-            {done && (
-              <div className="absolute inset-0 z-20 grid place-items-center bg-zinc-950/75 backdrop-blur-sm animate-in fade-in duration-300">
-                <div className="text-center">
-                  <div className="seal-in mx-auto grid size-12 place-items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 text-emerald-400">
-                    <Check className="size-5" aria-hidden />
-                  </div>
-                  <p className="mt-3 text-[14px] font-medium text-zinc-100">
-                    {meta?.doubts ?? 0} doubts found
-                  </p>
-                  <p className="mt-1 font-mono text-[8.5px] uppercase tracking-[0.18em] text-zinc-500">
-                    server board ready · opening triage
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {progress >= 100 && !ready && !failed && (
-              <div className="absolute inset-0 z-20 grid place-items-center bg-zinc-950/75 backdrop-blur-sm animate-in fade-in duration-300">
-                <div className="text-center">
-                  <Loader2
-                    className="mx-auto size-7 animate-spin text-emerald-400"
-                    aria-hidden
-                  />
-                  <p className="mt-3 text-[14px] font-medium text-zinc-100">
-                    Waiting for the API
-                  </p>
-                  <p className="mt-1 font-mono text-[8.5px] uppercase tracking-[0.18em] text-zinc-500">
-                    signed session · role-scoped payload
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {failed && (
-              <div className="absolute inset-0 z-20 grid place-items-center bg-zinc-950/80 backdrop-blur-sm animate-in fade-in duration-300">
-                <div className="mx-6 max-w-xs text-center">
-                  <AlertTriangle
-                    className="mx-auto size-7 text-red-400"
-                    aria-hidden
-                  />
-                  <p className="mt-3 text-[14px] font-medium text-zinc-100">
-                    The backend did not answer
-                  </p>
-                  <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
-                    {error ?? 'Unknown API error'}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => void loadBoard()}
-                    className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-red-300 transition hover:bg-red-500/15"
-                  >
-                    <RefreshCw className="size-3" aria-hidden />
-                    Retry API
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
 
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-zinc-800/60 bg-zinc-900/20 px-3 py-2">
-            <Sparkles className="size-3.5 shrink-0 text-emerald-400/80" aria-hidden />
+          <div className="mt-4 flex items-start gap-2 px-1">
+            <Sparkles className="mt-0.5 size-3.5 shrink-0 text-emerald-400/70" aria-hidden />
             <p className="text-[10.5px] leading-snug text-zinc-500">
               Relay doesn&apos;t summarise. It finds where your team&apos;s
               sources disagree, then asks you to decide.

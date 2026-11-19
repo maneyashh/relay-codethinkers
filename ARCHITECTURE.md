@@ -16,8 +16,15 @@ are not part of this MVP.
 
 Beyond the read-only boundary, the app now covers the full handover loop:
 
-- **Chaos in:** session-scoped live signal injection from Slack, GitHub, Notion,
-  Jira, code or email, with deterministic confidence synthesis.
+- **Live chaos in:** session-scoped live signal injection from Slack, GitHub,
+  Notion, Jira, code or email, plus one-click ingestion of a real public GitHub
+  repository through the unauthenticated REST API.
+- **Deterministic drift analysis:** runtime, datastore, credential, retry,
+  release and missing-artifact checks run in TypeScript with no model call and
+  no randomness. Every finding cites a real file, SHA and diff.
+- **Signed webhooks:** realistic `push` and `pull_request` deliveries are
+  HMAC-SHA256 signed, verified server-side, and appended incrementally and
+  idempotently.
 - **Human decisions:** decision type, rationale, owner, named sign-off and a
   separate verification state are persisted per doubt.
 - **Evidence-grounded interrogation:** asking about a doubt returns its
@@ -25,10 +32,19 @@ Beyond the read-only boundary, the app now covers the full handover loop:
 - **Role-scoped remediation:** patches, verification commands and Day-1 plans
   exist only for the developer lens; the manager receives a checklist and a
   reason, never a path or a diff.
+- **Server-built dispatch:** GitHub PR and Notion sync artifacts are assembled
+  from the signed session's board. A missing token yields a cryptographically
+  signed sandbox dispatch, never a fake external write.
 - **Verified handover:** decision ledger, Day-1 plan, JSON, Markdown and patch
   exports, plus a judge accelerator that is explicitly audited as `auto`.
-- **Inspectable security:** a four-tab proof surface (boundary, payload diff,
-  live signals, audit trail) backed by the same server probe the CLI runs.
+- **Tamper-evident receipts:** every action extends a per-session SHA-256 hash
+  chain, exported as `.relay.sig` and verified over HTTP.
+- **Inspectable security:** a five-tab proof surface (boundary, payload diff,
+  live signals, receipt, audit trail) backed by the same server probe the CLI
+  runs.
+- **Guided focus:** the board defaults to one contradiction at a time with
+  on-demand Blast Radius, Remediation, Evidence and Security drawers; a
+  War-room toggle restores the full two-column layout.
 
 ## Stack
 
@@ -56,20 +72,29 @@ apps/web/
     api/triage/reset/       clear one session's progress and signals
     api/doubts/[id]/        resolve / skip / reopen / verify one doubt
     api/signals/            inject a session-scoped live signal
+    api/github/ingest/      fetch a real repo, attach deterministic findings
+    api/github/webhook/     verify a signed push / pull_request delivery
+    api/integrations/       list, GitHub PR and Notion dispatch
     api/remediation/        role-scoped remediation corpus
     api/security/verify/    counts-only proof of the boundary
     api/security/audit/     sanitized session audit trail
+    api/security/receipt/   export / verify the SHA-256 receipt chain
     api/health/             live database + resilience check
   db/
-    schema.ts               tables, constraints, role-scoped SQL views
+    schema.ts               tables, constraints, role-scoped SQL views (v3)
     client.ts               lazy DB open + resilience ladder + idempotent seed
     seed.json               the narrative dataset
     board.ts                projections, decisions, signals, fast-forward, reset
+    github.ts               live ingestion + live-doubt persistence
     session.ts              HMAC tokens, signed-role revival, session records
-    security.ts             projection comparison + sanitized audit report
+    security.ts             projection comparison, live/integration boundaries
   lib/
     synthesis.ts            shared deterministic confidence formula
     remediation.ts          server-only patches, verification, rollback, Day-1
+    github-fetch.ts         real GitHub REST fetch + labelled fallback
+    github-analyzer.ts      deterministic drift findings + webhook findings
+    integrations.ts         server-built artifacts, dispatch signing, live writes
+    crypto-ledger.ts        SHA-256 hash chain, receipt signing, tamper checks
   server/http.ts            cookie helpers, no-store JSON, 401 helper
   stores/triage.ts          API-driven Zustand store
   components/               landing, ingestion, triage, handover UI
@@ -96,6 +121,11 @@ Browser ──► POST /api/signals ──► session row + audience-scoped sign
                                 └─► deterministic confidence recompute
 Browser ──► GET /api/remediation/:id ──► patch (junior) or checklist (manager)
 Browser ──► GET /api/security/audit ──► sanitized, session-scoped events
+Browser ──► POST /api/github/ingest ──► unauthenticated GitHub REST fetch
+                                    └─► deterministic analyzer ──► v_live_* views
+Browser ──► POST /api/github/webhook ──► verify HMAC ──► incremental live doubt
+Browser ──► POST /api/integrations/:target ──► server-built artifact + signature
+Browser ──► GET /api/security/receipt ──► recompute every link + HMAC signature
 ```
 
 Live signals are written to `session_signals`, never to the seeded `evidence`
@@ -104,6 +134,32 @@ developer-only signal is absent from the manager payload rather than filtered in
 the browser. Confidence is recomputed from fixed weights
 (`contradicts +0.10`, `context +0.03`, `supports −0.06`, scaled by relevance and
 clamped to `0.45..0.995`), and the formula is rendered beside the result.
+
+Live GitHub findings follow the same rule. `POST /api/github/ingest` fetches the
+repository (`GET /repos/:owner/:name`, latest commits, recursive tree) and a
+bounded set of raw files, runs `lib/github-analyzer.ts`, and writes one row per
+finding to `session_live_doubts`. The row stores separate `manager_payload` and
+`junior_payload` JSON documents. `v_live_manager` never selects `repo`, `ref`,
+`head_sha`, `source_url` or the developer payload, so a manager query cannot
+read a diff, path or SHA even if a handler forgot a check. A new ingestion
+replaces that session's previous live findings; a webhook appends one finding
+and is idempotent by delivery id.
+
+One-click dispatch never trusts the browser for content. The route rebuilds the
+artifact from the signed session's board, hashes it, signs it, persists it in
+`session_integrations`, appends to the receipt chain and writes an audit event.
+The manager SQL view omits the `artifact` column entirely. Only the developer
+role may dispatch a GitHub PR; the manager receives `403` before any dispatch
+work occurs. Both roles may dispatch Notion, but the manager response never
+contains the artifact.
+
+The receipt chain is computed at read time from `ledger_entries`: each entry
+hashes `prevHash|seq|kind|doubtId|payloadJson|createdAt`, with a genesis hash
+derived from the session id. The receipt signature is
+`HMAC-SHA256(sessionRef|entryCount|rootHash)`. `GET /api/security/receipt`
+recomputes every link, checks the signature and simulates a tamper on an
+in-memory copy. `POST /api/security/receipt` verifies an exported `.relay.sig`
+without ever mutating the live ledger.
 
 The ingestion screen starts `POST /api/session` in parallel with its animation.
 It only advances when **both** the animation and the real API response are done.
@@ -124,9 +180,22 @@ Per-browser progress is isolated in `sessions` and `session_doubts`:
   (`pending | verified | waived`).
 - `session_signals` stores judge-injected live signals with their audience and
   deterministic inputs (`polarity`, `relevance`).
+- `session_ingestions` records each live GitHub fetch for a session: repo, ref,
+  head SHA, `live | fallback` mode, files scanned, commits read and finding
+  count.
+- `session_live_doubts` stores ingested and webhook findings as session-scoped
+  doubts. Manager and developer payloads are separate JSON columns, consumed
+  through `v_live_manager` / `v_live_junior`.
+- `session_integrations` stores each GitHub PR or Notion dispatch: target, mode
+  (`live | sandbox`), reference, URL, HMAC signature and artifact SHA-256. The
+  manager view excludes the artifact body.
+- `ledger_entries` is the append-only SHA-256 chain, and `session_receipts`
+  caches the latest entry count, root hash and HMAC signature.
 - `audit_log` records session creation, role switches, resolves, verifies, skips,
-  reopens, signal injections, fast-forwards and resets. It is append-only from
-  the application's point of view and its details never contain evidence text.
+  reopens, signal injections, fast-forwards, resets, GitHub ingestions, verified
+  webhooks and integration dispatches. It is append-only from the application's
+  point of view and its details never contain evidence text, source URLs or raw
+  SHAs.
 
 The seed is applied lazily on the first request and is idempotent. Deleting
 `.data/relay.db` (or running `npm run db:reset`) recreates the original board.
@@ -231,7 +300,7 @@ npm run dev            # in one terminal
 npm run verify:security
 ```
 
-The script currently runs 46 assertions, including:
+The script currently runs 72 assertions, including:
 
 - the manager payload contains no `"filePath"`, `"commit"`, `"implementation"`,
   redacted keys or `relay-staging-2024!`;
@@ -248,7 +317,36 @@ The script currently runs 46 assertions, including:
 - the audit trail records `signal.inject` without echoing the injected quote;
 - a fresh session starts clean, fast-forward resolves six doubts as `auto`, and
   reset returns readiness to zero;
+- live GitHub ingestion attaches real SHA/file evidence, stays isolated to its
+  signed session, and is fully redacted in the manager projection;
+- simulated `push` and `pull_request` webhooks are HMAC-verified and append
+  incrementally;
+- developer GitHub PR dispatch is signed, while the manager receives a hard
+  `403` with no diff; Notion sync respects the same role projection;
+- the receipt chain verifies, and a POSTed tamper or mutated export reports the
+  broken link while the live ledger stays clean;
 - every protected endpoint returns `401` without a session.
+
+## Round 3 Deliverables Implemented
+
+1. **Real GitHub ingestion and signed webhooks.** `/api/github/ingest` turns a
+   live public repository into session-scoped findings with real file paths,
+   SHAs and diffs. `/api/github/webhook` verifies HMAC-SHA256 `push` and
+   `pull_request` deliveries and appends idempotently. A second session never
+   sees another session's live rows, and the manager SQL view omits all
+   technical keys.
+2. **One-click remediation dispatch.** `/api/integrations/github-pr` returns a
+   signed server-built PR bundle for the developer lens and a hard `403` before
+   any artifact work for managers. `/api/integrations/notion-sync` creates or
+   sandbox-signs a role-filtered Notion page, withholding the artifact from the
+   manager projection.
+3. **Tamper-evident `.relay.sig` receipt.** `/api/security/receipt` exports a
+   contiguous SHA-256 hash chain signed with HMAC-SHA256. POST verification
+   accepts an exported receipt and `{ tamper: true }`, reports the first broken
+   link and rejected signature, and never mutates the live ledger.
+
+The verification suite now covers all three deliverables as **72** live HTTP
+assertions.
 
 ## API
 

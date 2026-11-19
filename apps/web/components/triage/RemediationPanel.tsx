@@ -7,17 +7,25 @@ import {
   ClipboardCheck,
   Code2,
   Copy,
+  ExternalLink,
+  FileText,
+  GitPullRequest,
   Loader2,
   Lock,
   Play,
   ShieldAlert,
+  ShieldCheck,
   Undo2,
   Wrench,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { RemediationPackage, RemediationResponse } from '@/lib/api-types';
-import type { Doubt, Role } from '@/stores/triage';
+import type {
+  IntegrationDispatchResponse,
+  RemediationPackage,
+  RemediationResponse,
+} from '@/lib/api-types';
+import type { Doubt, IntegrationTarget, Role } from '@/stores/triage';
 import { useTriage } from '@/stores/triage';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
@@ -72,7 +80,10 @@ function DiffBlock({
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-950/70">
+    <div
+      data-guide="remediation-diff"
+      className="overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-950/70"
+    >
       <div className="flex items-center gap-2 border-b border-zinc-800/70 px-2.5 py-1.5">
         <Code2 className="size-3 shrink-0 text-emerald-400/80" aria-hidden />
         <code className="min-w-0 flex-1 truncate font-mono text-[9.5px] text-zinc-300">
@@ -126,16 +137,28 @@ function DiffBlock({
 export function RemediationPanel({
   doubt,
   role,
+  hideDispatch = false,
 }: {
   doubt: Doubt;
   role: Role;
+  /** The resolved banner already owns dispatch; avoid a second toolbar. */
+  hideDispatch?: boolean;
 }) {
   const verifyDoubt = useTriage((s) => s.verifyDoubt);
   const pendingAction = useTriage((s) => s.pendingAction);
+  const dispatchIntegration = useTriage((s) => s.dispatchIntegration);
+  const clearError = useTriage((s) => s.clearError);
 
   const [pkg, setPkg] = useState<RemediationPackage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dispatch, setDispatch] = useState<IntegrationDispatchResponse | null>(
+    null,
+  );
+  const [dispatchError, setDispatchError] = useState<string | null>(null);
+  const [dispatchTarget, setDispatchTarget] = useState<IntegrationTarget | null>(
+    null,
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -166,6 +189,29 @@ export function RemediationPanel({
     doubt.status === 'resolved' &&
     doubt.decision?.verification !== 'verified';
   const verified = doubt.decision?.verification === 'verified';
+  const dispatchBusy = pendingAction?.startsWith('dispatch:') ?? false;
+
+  async function runDispatch(target: IntegrationTarget) {
+    if (pendingAction) return;
+    setDispatchTarget(target);
+    setDispatchError(null);
+    const result = await dispatchIntegration(target);
+    if (!result) {
+      const message = useTriage.getState().error ?? 'Dispatch failed';
+      const forbidden = /403|developer|forbidden/i.test(message);
+      setDispatchError(
+        forbidden
+          ? '403 · least-privilege gate: the manager lens may not open a GitHub PR. The API rejected the request before it built any branch or diff.'
+          : message,
+      );
+      // The inline notice above owns the error for this action; keep the
+      // board-level banner from duplicating it.
+      clearError();
+    } else {
+      setDispatch(result);
+    }
+    setDispatchTarget(null);
+  }
 
   return (
     <section
@@ -358,6 +404,112 @@ export function RemediationPanel({
             )}
           </div>
         </div>
+      )}
+
+      {!hideDispatch && (
+        <div className="mt-3 rounded-lg border border-zinc-800/80 bg-zinc-950/40 p-2.5">
+        <p className="font-mono text-[8px] uppercase tracking-[0.16em] text-zinc-500">
+          ship this remediation
+        </p>
+        <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => void runDispatch('github')}
+            disabled={dispatchBusy}
+            className={[
+              'inline-flex items-center justify-center gap-1.5 rounded-lg border px-2.5 py-2 font-mono text-[8.5px] uppercase tracking-[0.12em] transition disabled:cursor-wait disabled:opacity-50',
+              role === 'manager'
+                ? 'border-amber-500/30 bg-amber-500/[0.06] text-amber-200 hover:bg-amber-500/10'
+                : 'border-zinc-700 bg-zinc-900/60 text-zinc-200 hover:border-zinc-600 hover:bg-zinc-800/70',
+            ].join(' ')}
+            title={
+              role === 'manager'
+                ? 'The API returns 403 for manager GitHub PR dispatch'
+                : 'Open a GitHub PR from the server-built handover artifact'
+            }
+          >
+            {dispatchTarget === 'github' && dispatchBusy ? (
+              <Loader2 className="size-3 animate-spin" aria-hidden />
+            ) : (
+              <GitPullRequest className="size-3" aria-hidden />
+            )}
+            Open Remediation PR
+          </button>
+          <button
+            type="button"
+            onClick={() => void runDispatch('notion')}
+            disabled={dispatchBusy}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900/60 px-2.5 py-2 font-mono text-[8.5px] uppercase tracking-[0.12em] text-zinc-200 transition hover:border-zinc-600 hover:bg-zinc-800/70 disabled:cursor-wait disabled:opacity-50"
+            title="Sync the signed handover artifact to Notion"
+          >
+            {dispatchTarget === 'notion' && dispatchBusy ? (
+              <Loader2 className="size-3 animate-spin" aria-hidden />
+            ) : (
+              <FileText className="size-3" aria-hidden />
+            )}
+            Sync to Notion
+          </button>
+        </div>
+
+        {role === 'manager' && (
+          <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.05] px-2.5 py-2">
+            <Lock className="mt-0.5 size-3 shrink-0 text-amber-300" aria-hidden />
+            <p className="text-[10px] leading-snug text-amber-200/90">
+              <span className="font-mono text-[8.5px] uppercase tracking-wider">
+                403 · least privilege
+              </span>
+              <br />
+              GitHub PR dispatch is developer-only. Managers may still sync the
+              role-filtered summary to Notion.
+            </p>
+          </div>
+        )}
+
+        {dispatchError && (
+          <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/[0.06] px-2.5 py-2">
+            <ShieldAlert className="mt-0.5 size-3 shrink-0 text-red-400" aria-hidden />
+            <p className="text-[10px] leading-snug text-red-200">{dispatchError}</p>
+          </div>
+        )}
+
+        {dispatch && (
+          <div className="mt-2 rounded-lg border border-emerald-500/25 bg-emerald-500/[0.04] px-2.5 py-2">
+            <p className="inline-flex items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.14em] text-emerald-300">
+              <ShieldCheck className="size-3" aria-hidden />
+              {dispatch.integration.target === 'github'
+                ? 'PR dispatch signed'
+                : 'Notion sync signed'}{' '}
+              · {dispatch.integration.mode}
+            </p>
+            <p className="mt-1 break-all font-mono text-[9px] text-zinc-300">
+              {dispatch.integration.reference}
+            </p>
+            <p className="mt-0.5 break-all font-mono text-[8px] text-zinc-600">
+              artifact sha256 · {dispatch.integration.artifactSha256.slice(0, 24)}…
+            </p>
+            {dispatch.integration.url && (
+              <a
+                href={dispatch.integration.url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-flex items-center gap-1 font-mono text-[8.5px] uppercase tracking-wider text-sky-300 underline-offset-2 hover:underline"
+              >
+                <ExternalLink className="size-2.5" aria-hidden />
+                open external record
+              </a>
+            )}
+            {dispatch.artifact ? (
+              <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap rounded border border-zinc-800/70 bg-zinc-950/60 px-2 py-1.5 font-mono text-[8.5px] leading-relaxed text-zinc-500">
+                {dispatch.artifact.markdown.slice(0, 900)}
+              </pre>
+            ) : (
+              <p className="mt-1.5 font-mono text-[8px] uppercase tracking-wider text-amber-300/70">
+                manager lens · no artifact payload by design
+              </p>
+            )}
+          </div>
+        )}
+      </div>
       )}
     </section>
   );

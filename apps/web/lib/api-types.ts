@@ -43,11 +43,211 @@ export interface BoardMeta {
   injectedSignals: number;
   /** Signals that exist for this session but were withheld from this lens. */
   injectedSignalsLocked: number;
+  /** Live GitHub findings attached to this session. */
+  liveDoubts: number;
+  /** Last live ingestion for this session, role-safe. */
+  ingestion: IngestionSummary | null;
+  /** Hash-chain receipt state for this session. */
+  ledger: {
+    entries: number;
+    rootHash: string;
+    signature: string;
+    verified: boolean;
+  };
+  /** Session-scoped dispatches, including sandbox fallbacks. */
+  integrations: {
+    total: number;
+    github: number;
+    notion: number;
+    lastMode: 'live' | 'sandbox' | null;
+  };
   /** Verbatim provenance of the role filter in SQL. */
   projection: {
     role: Role;
     view: string;
     signalView: string;
+    liveView: string;
+    integrationView: string;
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Round 3 · GitHub ingestion, integrations and receipts               */
+/* ------------------------------------------------------------------ */
+
+export type IngestionMode = 'live' | 'fallback';
+export type IngestionSource = 'preset' | 'custom';
+export type IntegrationTarget = 'github' | 'notion';
+export type IntegrationMode = 'live' | 'sandbox';
+
+export interface IngestionSummary {
+  id: string;
+  repo: string;
+  fullName: string;
+  ref: string;
+  /** Omitted from the manager projection. */
+  headSha?: string;
+  mode: IngestionMode;
+  source: IngestionSource;
+  filesScanned: number;
+  commitsRead: number;
+  findings: number;
+  createdAt: string;
+  fallbackReason?: string;
+}
+
+export interface FindingPreview {
+  id: string;
+  title: string;
+  claim: string;
+  severity: string;
+  kind: string;
+  area: string;
+  confidence: number;
+}
+
+export interface GitHubPreset {
+  id: string;
+  repo: string;
+  label: string;
+  detail: string;
+}
+
+export interface GitHubIngestRequest {
+  repo?: string;
+  presetId?: string;
+  mode?: 'live';
+}
+
+export interface GitHubIngestResponse extends BoardResponse {
+  ingestion: IngestionSummary;
+  findings: FindingPreview[];
+  liveDoubts: number;
+}
+
+export interface WebhookSimulationRequest {
+  event: 'push' | 'pull_request';
+  repo?: string;
+  presetId?: string;
+}
+
+export interface WebhookResponse extends BoardResponse {
+  verified: true;
+  event: string;
+  signature: string;
+  deliveryId: string;
+  action: string;
+  doubtsCreated: number;
+  duplicate: boolean;
+  liveDoubts: number;
+}
+
+export interface IntegrationRecord {
+  id: string;
+  target: IntegrationTarget;
+  mode: IntegrationMode;
+  status: 'dispatched' | 'failed';
+  reference: string;
+  url?: string;
+  signature: string;
+  artifactSha256: string;
+  createdAt: string;
+  detail?: string;
+}
+
+export interface IntegrationArtifactPreview {
+  title: string;
+  markdown: string;
+  bytes: number;
+  patchBytes: number;
+}
+
+export interface IntegrationDispatchResponse {
+  ok: true;
+  integration: IntegrationRecord;
+  artifact: IntegrationArtifactPreview | null;
+  ledger: {
+    entries: number;
+    rootHash: string;
+    signature: string;
+  };
+}
+
+export interface IntegrationListResponse {
+  generatedAt: string;
+  role: Role;
+  integrations: IntegrationRecord[];
+  counts: {
+    total: number;
+    github: number;
+    notion: number;
+    live: number;
+    sandbox: number;
+  };
+  capabilities: {
+    githubDispatchRole: 'junior';
+    managerGithubForbidden: true;
+    notionRoles: Role[];
+    liveGithub: boolean;
+    liveNotion: boolean;
+  };
+}
+
+export interface LedgerEntryView {
+  seq: number;
+  kind: string;
+  doubtId: string | null;
+  payload: Record<string, unknown>;
+  prevHash: string;
+  hash: string;
+  createdAt: string;
+}
+
+export interface RelayReceipt {
+  artifact: 'relay-handover-receipt';
+  version: 1;
+  algorithm: 'SHA-256';
+  chainFormula: string;
+  sessionRef: string;
+  entryCount: number;
+  genesisHash: string;
+  rootHash: string;
+  signature: string;
+  signatureAlgorithm: 'HMAC-SHA256';
+  generatedAt: string;
+  entries: LedgerEntryView[];
+}
+
+export interface ReceiptVerification {
+  ok: boolean;
+  entryCount: number;
+  rootHash: string;
+  genesisHash: string;
+  checkedHashes: number;
+  invalidHashes: number;
+  brokenAt: number | null;
+  signatureValid: boolean;
+  signature: string;
+  detail: string;
+}
+
+export interface ReceiptTamperReport {
+  tamperAt: number | null;
+  field: string | null;
+  verification: ReceiptVerification;
+  expectedRootHash: string;
+  tamperedRootHash: string;
+}
+
+export interface ReceiptResponse {
+  receipt: RelayReceipt;
+  verification: ReceiptVerification;
+  tamper: ReceiptTamperReport | null;
+  ledger: {
+    entries: number;
+    rootHash: string;
+    signature: string;
+    verified: boolean;
   };
 }
 
@@ -119,12 +319,20 @@ export interface SecurityProjection {
   payloadBytes: number;
 }
 
+export type SecurityCategory =
+  | 'row'
+  | 'column'
+  | 'session'
+  | 'synthesis'
+  | 'chain'
+  | 'integration';
+
 export interface SecurityCheck {
   id: string;
   label: string;
   pass: boolean;
   detail: string;
-  category: 'row' | 'column' | 'session' | 'synthesis';
+  category: SecurityCategory;
 }
 
 export interface SignalBoundary {
@@ -149,10 +357,43 @@ export interface SecurityReport {
   junior: SecurityProjection;
   checks: SecurityCheck[];
   signals: SignalBoundary;
+  /** Live GitHub findings obey the same signed-role boundary. */
+  live: {
+    total: number;
+    managerVisible: number;
+    juniorVisible: number;
+    managerLeaked: number;
+    juniorLeaked: number;
+    technicalKeyLeaks: number;
+  };
+  /** SHA-256 hash-chain and signed receipt state. */
+  chain: {
+    entries: number;
+    rootHash: string;
+    signature: string;
+    verified: boolean;
+    invalidHashes: number;
+    brokenAt: number | null;
+    signatureValid: boolean;
+    tamperDetected: boolean;
+  };
+  /** Dispatch role gate and sandbox signing state. */
+  integrations: {
+    total: number;
+    github: number;
+    notion: number;
+    live: number;
+    sandbox: number;
+    managerGithubStatus: number;
+    sandboxSigned: boolean;
+    artifactBoundaryPass: boolean;
+  };
   /** Human-readable facts that make the boundary inspectable on screen. */
   receipt: {
     sqlView: string;
     signalView: string;
+    liveView: string;
+    integrationView: string;
     hmac: 'HMAC-SHA256';
     cacheControl: 'no-store';
     storage: 'sqlite' | 'memory';

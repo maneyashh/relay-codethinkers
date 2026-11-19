@@ -15,6 +15,7 @@ import {
 import type {
   DecisionType,
   Doubt,
+  DoubtDecision,
   DoubtKind,
   DoubtStatus,
   Evidence,
@@ -25,6 +26,16 @@ import type {
   Severity,
   VerificationState,
 } from '@/lib/triage-types';
+import { appendLedgerEntry, ledgerSummary } from '@/lib/crypto-ledger';
+import {
+  clearLiveState,
+  getLastIngestion,
+  getLiveDoubtRow,
+  liveDoubtsFor,
+  liveResolutionExists,
+  publicLiveDoubtId,
+  updateLiveDoubt,
+} from './github';
 import { getDb, getStorageMode, PROJECT_ID } from './client';
 import {
   appendAudit,
@@ -122,6 +133,7 @@ type EvidenceRow = {
   channel?: string | null;
   file_path?: string | null;
   commit_ref?: string | null;
+  diff?: string | null;
   url?: string | null;
 };
 
@@ -137,6 +149,7 @@ type SignalRow = {
   created_at: string;
   file_path?: string | null;
   commit_ref?: string | null;
+  diff?: string | null;
 };
 
 type ProjectRow = {
@@ -178,6 +191,7 @@ function toEvidence(row: EvidenceRow): Evidence {
   if (row.redacted) evidence.redacted = row.redacted;
   if (row.file_path) evidence.filePath = row.file_path;
   if (row.commit_ref) evidence.commit = row.commit_ref;
+  if (row.diff) evidence.diff = row.diff;
   if (row.url) evidence.url = row.url;
   if (row.audience) evidence.audience = row.audience;
 
@@ -203,6 +217,7 @@ function toSignalEvidence(row: SignalRow): Evidence {
   // cannot accidentally carry them.
   if (row.file_path) evidence.filePath = row.file_path;
   if (row.commit_ref) evidence.commit = row.commit_ref;
+  if (row.diff) evidence.diff = row.diff;
 
   return evidence;
 }
@@ -336,6 +351,7 @@ export function buildBoard(session: SessionRecord): TriageBoard {
       evidence: [...baseEvidence, ...signals],
       resolutions,
       status: row.session_status,
+      origin: 'seed',
       lockedEvidence:
         (lockedRow ? Number(lockedRow.n) : 0) +
         (lockedSignalRow ? Number(lockedSignalRow.n) : 0),
@@ -394,6 +410,11 @@ export function buildBoard(session: SessionRecord): TriageBoard {
     return doubt;
   });
 
+  // Live GitHub findings are appended after the seeded narrative. Their role
+  // payloads come from v_live_manager / v_live_junior, never from a shared code
+  // path, so the manager projection cannot inherit technical columns.
+  doubts.push(...liveDoubtsFor(session.id, role));
+
   const totalRow = db
     .prepare('SELECT COUNT(*) AS n FROM evidence')
     .get() as CountRow | undefined;
@@ -425,6 +446,28 @@ export function buildBoard(session: SessionRecord): TriageBoard {
   const injectedSignalsLocked = allSignalRow
     ? Number(allSignalRow.n) - injectedSignals
     : 0;
+  const liveDoubts = doubts.filter((doubt) => doubt.origin !== 'seed').length;
+
+  const integrationRows = db
+    .prepare(
+      `SELECT target, mode, COUNT(*) AS n FROM session_integrations
+       WHERE session_id = ? GROUP BY target, mode`,
+    )
+    .all(session.id) as {
+    target: 'github' | 'notion';
+    mode: 'live' | 'sandbox';
+    n: number | bigint;
+  }[];
+  const integrationTotal = integrationRows.reduce(
+    (sum, row) => sum + Number(row.n),
+    0,
+  );
+  const lastIntegration = db
+    .prepare(
+      `SELECT mode FROM session_integrations
+       WHERE session_id = ? ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(session.id) as { mode: 'live' | 'sandbox' } | undefined;
 
   const meta: BoardMeta = {
     generatedAt: new Date().toISOString(),
@@ -449,10 +492,26 @@ export function buildBoard(session: SessionRecord): TriageBoard {
     })),
     injectedSignals,
     injectedSignalsLocked,
+    liveDoubts,
+    ingestion: getLastIngestion(session.id, role),
+    ledger: ledgerSummary(session.id),
+    integrations: {
+      total: integrationTotal,
+      github: integrationRows
+        .filter((row) => row.target === 'github')
+        .reduce((sum, row) => sum + Number(row.n), 0),
+      notion: integrationRows
+        .filter((row) => row.target === 'notion')
+        .reduce((sum, row) => sum + Number(row.n), 0),
+      lastMode: lastIntegration?.mode ?? null,
+    },
     projection: {
       role,
       view: evidenceView,
       signalView,
+      liveView: role === 'manager' ? 'v_live_manager' : 'v_live_junior',
+      integrationView:
+        role === 'manager' ? 'v_integration_manager' : 'v_integration_junior',
     },
   };
 
@@ -564,6 +623,23 @@ function decisionFromInput(
   };
 }
 
+function toDoubtDecision(
+  decision: ReturnType<typeof decisionFromInput>,
+  verification: VerificationState,
+  updatedAt: string,
+): DoubtDecision {
+  const output: DoubtDecision = {
+    type: decision.type,
+    signedOff: decision.signedOff,
+    verification,
+    updatedAt,
+  };
+  if (decision.rationale) output.rationale = decision.rationale;
+  if (decision.owner) output.owner = decision.owner;
+  if (decision.signoffName) output.signoffName = decision.signoffName;
+  return output;
+}
+
 function upsertDecision(
   sessionId: string,
   doubtId: string,
@@ -600,6 +676,199 @@ function upsertDecision(
     );
 }
 
+interface LiveActionRow {
+  status: DoubtStatus;
+  severity: Severity;
+  resolved_with: number | null;
+  payload: string;
+  decision_json: string | null;
+}
+
+function parseLivePayload(payload: string): {
+  owner: string;
+  recommended: Resolution['id'];
+  resolutions: Resolution[];
+} {
+  try {
+    const parsed = JSON.parse(payload) as {
+      implementation?: { owner?: string };
+      recommended?: number;
+      resolutions?: Resolution[];
+    };
+    const recommended = [1, 2, 3].includes(Number(parsed.recommended))
+      ? (Number(parsed.recommended) as Resolution['id'])
+      : 1;
+    return {
+      owner: parsed.implementation?.owner ?? 'repo owner',
+      recommended,
+      resolutions: Array.isArray(parsed.resolutions) ? parsed.resolutions : [],
+    };
+  } catch {
+    return { owner: 'repo owner', recommended: 1, resolutions: [] };
+  }
+}
+
+function existingLiveDecision(
+  row: LiveActionRow,
+  fallback: ReturnType<typeof decisionFromInput>,
+): ReturnType<typeof decisionFromInput> {
+  if (!row.decision_json) return fallback;
+  try {
+    const parsed = JSON.parse(row.decision_json) as DoubtDecision;
+    return {
+      type: parsed.type ?? fallback.type,
+      rationale: parsed.rationale ?? fallback.rationale,
+      owner: parsed.owner ?? fallback.owner,
+      signedOff: Boolean(parsed.signedOff),
+      signoffName: parsed.signoffName ?? fallback.signoffName,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Live GitHub doubts are session-scoped rows with JSON role payloads, so they
+ * do not share the seeded resolution/decision tables. They still get the same
+ * XP, audit and hash-chain treatment as the seeded narrative.
+ */
+function applyLiveDoubtAction(
+  session: SessionRecord,
+  doubtId: string,
+  action: DoubtAction,
+  resolutionId: number | undefined,
+  decisionInput: DecisionInput | undefined,
+): ActionResult | null {
+  const row = getLiveDoubtRow(session.id, doubtId) as LiveActionRow | null;
+  if (!row) return null;
+
+  const db = getDb();
+  const now = new Date().toISOString();
+  const payload = parseLivePayload(row.payload);
+  let reward: { key: number; amount: number } | null = null;
+
+  if (action === 'resolve') {
+    if (row.status === 'resolved') {
+      return { ok: true, board: buildBoard(session), reward: null };
+    }
+
+    const resolvedWith = Number(resolutionId);
+    if (![1, 2, 3].includes(resolvedWith)) {
+      return { ok: false, status: 400, error: 'invalid_resolution' };
+    }
+    if (!liveResolutionExists(session.id, doubtId, resolvedWith)) {
+      return { ok: false, status: 400, error: 'resolution_not_found' };
+    }
+
+    const decision = decisionFromInput(session, decisionInput, {
+      severity: row.severity,
+      impl_owner: payload.owner,
+    });
+    const amount =
+      Math.round(
+        BASE_XP[row.severity] * (1 + Math.min(session.streak, 5) * 0.1),
+      ) + DECISION_BONUS[decision.type];
+
+    updateLiveDoubt(session.id, doubtId, {
+      status: 'resolved',
+      resolvedWith,
+      decision: toDoubtDecision(decision, 'pending', now),
+    });
+    db.prepare(
+      'UPDATE sessions SET xp = xp + ?, streak = streak + 1, updated_at = ? WHERE id = ?',
+    ).run(amount, now, session.id);
+    appendAudit(
+      session.id,
+      session.role,
+      'doubt.resolve',
+      doubtId,
+      `origin=live resolution=${resolvedWith} decision=${decision.type} signed_off=${decision.signedOff} xp=${amount}`,
+    );
+    appendLedgerEntry(session.id, 'doubt.resolve', doubtId, {
+      origin: 'live',
+      resolution: resolvedWith,
+      decisionType: decision.type,
+      signedOff: decision.signedOff,
+      xp: amount,
+    });
+    reward = { key: Date.now(), amount };
+  } else if (action === 'verify') {
+    if (row.status !== 'resolved') {
+      return { ok: false, status: 400, error: 'doubt_not_resolved' };
+    }
+
+    const fallback = decisionFromInput(
+      session,
+      { decisionType: 'verify' },
+      { severity: row.severity, impl_owner: payload.owner },
+    );
+    const decision = existingLiveDecision(row, fallback);
+
+    updateLiveDoubt(session.id, doubtId, {
+      status: 'resolved',
+      resolvedWith: row.resolved_with as Resolution['id'] | null,
+      decision: toDoubtDecision(decision, 'verified', now),
+    });
+    db.prepare(
+      'UPDATE sessions SET xp = xp + ?, updated_at = ? WHERE id = ?',
+    ).run(DECISION_BONUS.verify, now, session.id);
+    appendAudit(
+      session.id,
+      session.role,
+      'doubt.verify',
+      doubtId,
+      'origin=live verification passed · decision marked verified',
+    );
+    appendLedgerEntry(session.id, 'doubt.verify', doubtId, {
+      origin: 'live',
+      verification: 'verified',
+      xp: DECISION_BONUS.verify,
+    });
+    reward = { key: Date.now(), amount: DECISION_BONUS.verify };
+  } else if (action === 'skip') {
+    if (row.status !== 'open') {
+      return { ok: true, board: buildBoard(session), reward: null };
+    }
+
+    updateLiveDoubt(session.id, doubtId, {
+      status: 'skipped',
+      resolvedWith: null,
+      decision: null,
+    });
+    db.prepare(
+      'UPDATE sessions SET streak = 0, updated_at = ? WHERE id = ?',
+    ).run(now, session.id);
+    appendAudit(session.id, session.role, 'doubt.skip', doubtId, 'origin=live');
+    appendLedgerEntry(session.id, 'doubt.skip', doubtId, {
+      origin: 'live',
+      status: 'skipped',
+    });
+  } else {
+    updateLiveDoubt(session.id, doubtId, {
+      status: 'open',
+      resolvedWith: null,
+      decision: null,
+    });
+    db.prepare(
+      'UPDATE sessions SET streak = 0, updated_at = ? WHERE id = ?',
+    ).run(now, session.id);
+    appendAudit(
+      session.id,
+      session.role,
+      'doubt.reopen',
+      doubtId,
+      'origin=live',
+    );
+    appendLedgerEntry(session.id, 'doubt.reopen', doubtId, {
+      origin: 'live',
+      status: 'open',
+    });
+  }
+
+  const fresh = getSessionById(session.id) ?? session;
+  return { ok: true, board: buildBoard(fresh), reward };
+}
+
 export function applyDoubtAction(
   session: SessionRecord,
   doubtId: string,
@@ -617,7 +886,14 @@ export function applyDoubtAction(
     | undefined;
 
   if (!doubt) {
-    return { ok: false, status: 404, error: 'doubt_not_found' };
+    const live = applyLiveDoubtAction(
+      session,
+      doubtId,
+      action,
+      resolutionId,
+      decisionInput,
+    );
+    return live ?? { ok: false, status: 404, error: 'doubt_not_found' };
   }
 
   const current = db
@@ -683,6 +959,13 @@ export function applyDoubtAction(
       doubtId,
       `resolution=${resolvedWith} decision=${decision.type} signed_off=${decision.signedOff} xp=${amount}`,
     );
+    appendLedgerEntry(session.id, 'doubt.resolve', doubtId, {
+      origin: 'seed',
+      resolution: resolvedWith,
+      decisionType: decision.type,
+      signedOff: decision.signedOff,
+      xp: amount,
+    });
     reward = { key: Date.now(), amount };
   } else if (action === 'verify') {
     if (status !== 'resolved') {
@@ -726,6 +1009,11 @@ export function applyDoubtAction(
       doubtId,
       'verification passed · decision marked verified',
     );
+    appendLedgerEntry(session.id, 'doubt.verify', doubtId, {
+      origin: 'seed',
+      verification: 'verified',
+      xp: DECISION_BONUS.verify,
+    });
     reward = { key: Date.now(), amount: DECISION_BONUS.verify };
   } else if (action === 'skip') {
     if (status !== 'open') {
@@ -739,6 +1027,10 @@ export function applyDoubtAction(
     ).run(now, session.id);
 
     appendAudit(session.id, session.role, 'doubt.skip', doubtId, null);
+    appendLedgerEntry(session.id, 'doubt.skip', doubtId, {
+      origin: 'seed',
+      status: 'skipped',
+    });
   } else {
     upsert.run(session.id, doubtId, 'open', null, now);
     clearDecision.run(session.id, doubtId);
@@ -747,6 +1039,10 @@ export function applyDoubtAction(
     ).run(now, session.id);
 
     appendAudit(session.id, session.role, 'doubt.reopen', doubtId, null);
+    appendLedgerEntry(session.id, 'doubt.reopen', doubtId, {
+      origin: 'seed',
+      status: 'open',
+    });
   }
 
   const fresh = getSessionById(session.id) ?? session;
@@ -816,9 +1112,62 @@ export function fastForwardSession(session: SessionRecord): {
       doubt.id,
       `resolution=${resolutionId} decision=auto`,
     );
+    appendLedgerEntry(session.id, 'doubt.fast_forward', doubt.id, {
+      origin: 'seed',
+      resolution: resolutionId,
+      decisionType: 'auto',
+    });
   }
 
-  if (open.length > 0) {
+  // Live GitHub findings are session-scoped rows, so the accelerator must walk
+  // them separately. They still receive a real decision + chain entry.
+  const liveOpen = db
+    .prepare(
+      `SELECT id, severity, junior_payload AS payload
+       FROM session_live_doubts
+       WHERE session_id = ? AND status = 'open'
+       ORDER BY position`,
+    )
+    .all(session.id) as {
+    id: string;
+    severity: Severity;
+    payload: string;
+  }[];
+
+  for (const doubt of liveOpen) {
+    const payload = parseLivePayload(doubt.payload);
+    const resolutionId = payload.recommended;
+    const liveId = publicLiveDoubtId(session.id, doubt.id);
+    updateLiveDoubt(session.id, doubt.id, {
+      status: 'resolved',
+      resolvedWith: resolutionId,
+      decision: {
+        type: 'auto',
+        rationale:
+          'Judge accelerator: Relay applied the curated recommended remediation.',
+        owner: payload.owner,
+        signedOff: false,
+        verification: 'pending',
+        updatedAt: now,
+      },
+    });
+    xp += Math.round(BASE_XP[doubt.severity] * 0.5);
+    resolutionMap.push({ doubtId: liveId, resolutionId });
+    appendAudit(
+      session.id,
+      session.role,
+      'doubt.fast_forward',
+      liveId,
+      `origin=live resolution=${resolutionId} decision=auto`,
+    );
+    appendLedgerEntry(session.id, 'doubt.fast_forward', liveId, {
+      origin: 'live',
+      resolution: resolutionId,
+      decisionType: 'auto',
+    });
+  }
+
+  if (open.length > 0 || liveOpen.length > 0) {
     db.prepare(
       'UPDATE sessions SET xp = xp + ?, updated_at = ? WHERE id = ?',
     ).run(xp, now, session.id);
@@ -827,7 +1176,7 @@ export function fastForwardSession(session: SessionRecord): {
   const fresh = getSessionById(session.id) ?? session;
   return {
     board: buildBoard(fresh),
-    fastForwarded: open.length,
+    fastForwarded: open.length + liveOpen.length,
     resolutionMap,
   };
 }
@@ -988,6 +1337,16 @@ export function resetSessionProgress(session: SessionRecord): TriageBoard {
   );
   db.prepare('DELETE FROM session_signals WHERE session_id = ?').run(session.id);
   db.prepare(
+    'DELETE FROM session_integrations WHERE session_id = ?',
+  ).run(session.id);
+  clearLiveState(session.id);
+
+  // Reset starts a fresh receipt chain. The old links are discarded *and* the
+  // new genesis records the reset, so the chain never claims continuity it
+  // cannot prove.
+  db.prepare('DELETE FROM ledger_entries WHERE session_id = ?').run(session.id);
+  db.prepare('DELETE FROM session_receipts WHERE session_id = ?').run(session.id);
+  db.prepare(
     'UPDATE sessions SET xp = 0, streak = 0, updated_at = ? WHERE id = ?',
   ).run(now, session.id);
 
@@ -996,8 +1355,19 @@ export function resetSessionProgress(session: SessionRecord): TriageBoard {
     session.role,
     'session.reset',
     null,
-    'progress, decisions and injected signals cleared',
+    'progress, decisions, signals, live findings, dispatches and receipt chain cleared',
   );
+  appendLedgerEntry(session.id, 'session.reset', null, {
+    role: session.role,
+    cleared: [
+      'session_doubts',
+      'session_decisions',
+      'session_signals',
+      'session_live_doubts',
+      'session_ingestions',
+      'session_integrations',
+    ],
+  });
 
   return buildBoard(getSessionById(session.id) ?? session);
 }

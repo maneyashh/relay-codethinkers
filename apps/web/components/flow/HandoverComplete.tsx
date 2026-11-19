@@ -20,14 +20,21 @@ import {
   Lock,
   RotateCcw,
   ShieldCheck,
+  ShieldX,
   Sparkles,
+  X,
   Zap,
 } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { HandoverGraph } from '@/components/flow/HandoverGraph';
-import type { RemediationPackage, RemediationResponse } from '@/lib/api-types';
+import type {
+  IntegrationDispatchResponse,
+  ReceiptTamperReport,
+  RemediationPackage,
+  RemediationResponse,
+} from '@/lib/api-types';
 import type { DecisionType, Doubt, Role, Severity } from '@/stores/triage';
 import { useConsole } from '@/stores/console';
 import { useTriage } from '@/stores/triage';
@@ -236,6 +243,13 @@ export function HandoverComplete() {
   const setView = useTriage((s) => s.setView);
   const reset = useTriage((s) => s.reset);
   const reveal = useConsole((s) => s.reveal);
+  const setSecurityOpen = useConsole((s) => s.setSecurityOpen);
+  const integrations = useTriage((s) => s.integrations);
+  const loadIntegrations = useTriage((s) => s.loadIntegrations);
+  const dispatchIntegration = useTriage((s) => s.dispatchIntegration);
+  const pendingAction = useTriage((s) => s.pendingAction);
+  const receipt = useTriage((s) => s.receipt);
+  const loadReceipt = useTriage((s) => s.loadReceipt);
 
   const [packages, setPackages] = useState<RemediationPackage[] | null>(null);
   const [pkgError, setPkgError] = useState<string | null>(null);
@@ -286,6 +300,11 @@ export function HandoverComplete() {
     };
   }, [role]);
 
+  useEffect(() => {
+    void loadIntegrations();
+    void loadReceipt();
+  }, [loadIntegrations, loadReceipt]);
+
   const resolved = useMemo(
     () => doubts.filter((d) => d.status === 'resolved'),
     [doubts],
@@ -305,7 +324,13 @@ export function HandoverComplete() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [synced, setSynced] = useState<'notion' | 'github' | null>(null);
+  const [lastDispatch, setLastDispatch] =
+    useState<IntegrationDispatchResponse | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [tamper, setTamper] = useState<ReceiptTamperReport | null>(null);
+  const [tamperOpen, setTamperOpen] = useState(false);
+  const [tamperBusy, setTamperBusy] = useState(false);
+  const [tamperError, setTamperError] = useState<string | null>(null);
   const markdown = useMemo(
     () => buildMarkdown(resolved, role),
     [resolved, role],
@@ -317,6 +342,24 @@ export function HandoverComplete() {
   const patchBundle = useMemo(
     () => buildPatchBundle(resolved, packages),
     [resolved, packages],
+  );
+  const prBranches = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          resolved
+            .map((doubt) => doubt.implementation?.branch)
+            .filter((branch): branch is string => Boolean(branch)),
+        ),
+      ),
+    [resolved],
+  );
+  const ciPreviews = useMemo(
+    () =>
+      (packages ?? [])
+        .filter((pkg) => pkg.allowed && pkg.verification)
+        .slice(0, 4),
+    [packages],
   );
   const signedOff = resolved.filter((doubt) => doubt.decision?.signedOff);
   const verified = resolved.filter(
@@ -424,14 +467,86 @@ export function HandoverComplete() {
     );
   }
 
-  function exportToNotion() {
-    setSynced('notion');
-    setToast('Exported to Notion · relay-labs/handover');
+  const latestGithub = integrations.find((item) => item.target === 'github');
+  const latestNotion = integrations.find((item) => item.target === 'notion');
+  const dispatchBusy = pendingAction?.startsWith('dispatch:') ?? false;
+
+  async function exportToNotion() {
+    const result = await dispatchIntegration('notion');
+    if (!result) return;
+    setLastDispatch(result);
+    setToast(
+      result.integration.mode === 'live'
+        ? 'Notion page created by the live API'
+        : `Signed sandbox dispatch · ${result.integration.reference}`,
+    );
   }
 
-  function draftPullRequest() {
-    setSynced('github');
-    setToast('Draft PR opened · relay-labs/handover-artifact');
+  async function draftPullRequest() {
+    const result = await dispatchIntegration('github');
+    if (!result) {
+      setToast(
+        role === 'manager'
+          ? '403 · GitHub PR dispatch requires the developer lens'
+          : 'GitHub dispatch failed · inspect the error',
+      );
+      return;
+    }
+    setLastDispatch(result);
+    setToast(
+      result.integration.mode === 'live'
+        ? `GitHub PR ${result.integration.reference} opened`
+        : `Signed sandbox PR dispatch · ${result.integration.reference}`,
+    );
+  }
+
+  function downloadReceipt() {
+    if (!receipt) {
+      setToast('Receipt not loaded yet · rerun the probe');
+      return;
+    }
+    downloadFile(
+      `${receipt.receipt.sessionRef}.relay.sig`,
+      JSON.stringify(receipt.receipt, null, 2),
+      'application/json;charset=utf-8',
+      '.relay.sig receipt',
+    );
+  }
+
+  async function simulateTamperAttack() {
+    if (!receipt) {
+      setToast('Receipt not loaded yet · rerun the probe');
+      return;
+    }
+    if (tamperOpen) {
+      setTamperOpen(false);
+      return;
+    }
+    setTamperBusy(true);
+    setTamperError(null);
+    try {
+      const response = await fetch('/api/security/receipt', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receipt: receipt.receipt, tamper: true }),
+      });
+      const data = (await response.json()) as {
+        tamper?: ReceiptTamperReport | null;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(data.error ?? `Verifier returned ${response.status}`);
+      }
+      setTamper(data.tamper ?? receipt.tamper);
+      setTamperOpen(true);
+    } catch (cause) {
+      setTamperError(
+        cause instanceof Error ? cause.message : 'Tamper simulation failed',
+      );
+    } finally {
+      setTamperBusy(false);
+    }
   }
 
   return (
@@ -947,33 +1062,74 @@ export function HandoverComplete() {
               <div className="mt-3 flex flex-col gap-2">
                 <button
                   type="button"
-                  onClick={exportToNotion}
-                  className="group flex w-full items-center gap-2 rounded-lg bg-zinc-100 px-3 py-2.5 text-[11.5px] font-semibold text-zinc-950 transition hover:bg-white active:scale-[0.995]"
+                  onClick={() => void exportToNotion()}
+                  disabled={dispatchBusy}
+                  className="group flex w-full items-center gap-2 rounded-lg bg-zinc-100 px-3 py-2.5 text-[11.5px] font-semibold text-zinc-950 transition hover:bg-white active:scale-[0.995] disabled:cursor-wait disabled:opacity-60"
                 >
-                  {synced === 'notion' ? (
+                  {latestNotion ? (
                     <Check className="size-3.5" aria-hidden />
                   ) : (
                     <FileText className="size-3.5" aria-hidden />
                   )}
-                  {synced === 'notion' ? 'Synced to Notion' : 'Export to Notion'}
+                  {latestNotion
+                    ? latestNotion.mode === 'live'
+                      ? 'Synced to Notion'
+                      : 'Sandbox Notion dispatch'
+                    : 'Export to Notion'}
+                  <span className="ml-auto font-mono text-[8px] uppercase tracking-[0.1em] opacity-60">
+                    {latestNotion?.mode ?? 'one click'}
+                  </span>
                   <ArrowRight
-                    className="ml-auto size-3.5 transition-transform group-hover:translate-x-0.5"
+                    className="size-3.5 transition-transform group-hover:translate-x-0.5"
                     aria-hidden
                   />
                 </button>
 
                 <button
                   type="button"
-                  onClick={draftPullRequest}
-                  className="flex w-full items-center gap-2 rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2.5 text-[11.5px] font-medium text-zinc-200 transition hover:border-zinc-600 hover:bg-zinc-800/70 active:scale-[0.995]"
+                  onClick={() => void draftPullRequest()}
+                  disabled={dispatchBusy}
+                  className={[
+                    'flex w-full items-center gap-2 rounded-lg border px-3 py-2.5 text-[11.5px] font-medium transition active:scale-[0.995] disabled:cursor-wait disabled:opacity-60',
+                    role === 'manager'
+                      ? 'border-amber-500/30 bg-amber-500/[0.06] text-amber-200 hover:bg-amber-500/10'
+                      : 'border-zinc-700/80 bg-zinc-900/60 text-zinc-200 hover:border-zinc-600 hover:bg-zinc-800/70',
+                  ].join(' ')}
+                  title={
+                    role === 'manager'
+                      ? 'The API returns 403 for manager GitHub PR dispatch'
+                      : 'Dispatch the server-built handover artifact'
+                  }
                 >
-                  {synced === 'github' ? (
+                  {latestGithub ? (
                     <Check className="size-3.5 text-emerald-400" aria-hidden />
                   ) : (
                     <GitBranch className="size-3.5" aria-hidden />
                   )}
-                  {synced === 'github' ? 'PR drafted' : 'Open GitHub PR'}
+                  {role === 'manager'
+                    ? 'Manager PR forbidden · 403'
+                    : latestGithub
+                      ? latestGithub.mode === 'live'
+                        ? `PR ${latestGithub.reference} opened`
+                        : 'Sandbox PR dispatch'
+                      : 'Open GitHub PR'}
+                  <span className="ml-auto font-mono text-[8px] uppercase tracking-[0.1em] opacity-60">
+                    {role === 'manager'
+                      ? 'developer only'
+                      : (latestGithub?.mode ?? 'one click')}
+                  </span>
                 </button>
+
+                {lastDispatch && (
+                  <button
+                    type="button"
+                    onClick={() => setInspectorOpen(true)}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-sky-500/25 bg-sky-500/[0.06] px-3 py-2 font-mono text-[9px] uppercase tracking-[0.12em] text-sky-300 transition hover:bg-sky-500/10"
+                  >
+                    <ShieldCheck className="size-3" aria-hidden />
+                    inspect dispatch · {lastDispatch.integration.reference}
+                  </button>
+                )}
 
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -1026,8 +1182,202 @@ export function HandoverComplete() {
               </div>
 
               <p className="mt-2 text-center font-mono text-[7.5px] uppercase tracking-[0.14em] text-zinc-600">
-                demo exports · no external writes
+                {integrations.some((item) => item.mode === 'live')
+                  ? 'live external write · signed receipt persisted'
+                  : 'zero-config signed sandbox · no external writes'}
               </p>
+            </section>
+
+            <section className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 p-4">
+              <div className="flex items-center gap-2">
+                <ShieldCheck
+                  className="size-3.5 text-violet-300/80"
+                  aria-hidden
+                />
+                <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+                  signed receipt
+                </p>
+                {receipt && (
+                  <span
+                    className={[
+                      'ml-auto rounded px-1.5 py-0.5 font-mono text-[7.5px] uppercase tracking-wider',
+                      receipt.verification.ok
+                        ? 'bg-emerald-500/10 text-emerald-300'
+                        : 'bg-red-500/10 text-red-300',
+                    ].join(' ')}
+                  >
+                    {receipt.verification.ok ? 'valid' : 'broken'}
+                  </span>
+                )}
+              </div>
+              {receipt ? (
+                <>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div className="rounded-lg border border-zinc-800/70 bg-zinc-950/40 px-2.5 py-2">
+                      <p className="font-mono text-[18px] font-medium text-zinc-100">
+                        {receipt.receipt.entryCount}
+                      </p>
+                      <p className="mt-0.5 font-mono text-[7.5px] uppercase tracking-[0.12em] text-zinc-500">
+                        chain entries
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-zinc-800/70 bg-zinc-950/40 px-2.5 py-2">
+                      <p className="font-mono text-[18px] font-medium text-zinc-100">
+                        {receipt.verification.checkedHashes}
+                      </p>
+                      <p className="mt-0.5 font-mono text-[7.5px] uppercase tracking-[0.12em] text-zinc-500">
+                        hashes verified
+                      </p>
+                    </div>
+                  </div>
+                  <p className="mt-2 truncate font-mono text-[8px] text-zinc-600">
+                    root · {receipt.receipt.rootHash}
+                  </p>
+                  <p className="mt-0.5 truncate font-mono text-[8px] text-zinc-600">
+                    sig · {receipt.receipt.signature}
+                  </p>
+                  <div className="mt-2 grid gap-1.5">
+                    <button
+                      type="button"
+                      onClick={downloadReceipt}
+                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet-500/25 bg-violet-500/[0.06] px-3 py-2 font-mono text-[9px] uppercase tracking-[0.12em] text-violet-200 transition hover:bg-violet-500/10"
+                    >
+                      <Download className="size-3" aria-hidden />
+                      export .relay.sig
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void simulateTamperAttack()}
+                      disabled={tamperBusy}
+                      className={[
+                        'inline-flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 font-mono text-[9px] uppercase tracking-[0.12em] transition disabled:cursor-wait disabled:opacity-60',
+                        tamperOpen
+                          ? 'border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/15'
+                          : 'border-amber-500/30 bg-amber-500/[0.06] text-amber-300 hover:bg-amber-500/10',
+                      ].join(' ')}
+                    >
+                      {tamperBusy ? (
+                        <Loader2 className="size-3 animate-spin" aria-hidden />
+                      ) : (
+                        <ShieldX className="size-3" aria-hidden />
+                      )}
+                      {tamperBusy
+                        ? 'tampering…'
+                        : tamperOpen
+                          ? 'restore clean receipt'
+                          : 'simulate tamper attack'}
+                    </button>
+                  </div>
+
+                  {tamperError && (
+                    <p className="mt-2 rounded-lg border border-red-500/30 bg-red-500/[0.06] px-2.5 py-2 text-[10px] leading-snug text-red-200">
+                      {tamperError}
+                    </p>
+                  )}
+
+                  {tamperOpen && tamper && (
+                    <div className="mt-2 rounded-lg border border-red-500/35 bg-red-500/[0.07] p-2.5 animate-in fade-in duration-150">
+                      <p className="inline-flex items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.14em] text-red-300">
+                        <ShieldX className="size-3" aria-hidden />
+                        hash chain broken · POST verified
+                      </p>
+                      <p className="mt-1 text-[10px] leading-snug text-red-100/90">
+                        {tamper.tamperAt === null
+                          ? 'The ledger is empty, so the simulator could not mutate an entry.'
+                          : `Mutated seq ${tamper.tamperAt} · ${tamper.field}. The next prevHash no longer matches and HMAC-SHA256 is rejected.`}
+                      </p>
+                      <div className="mt-1.5 grid grid-cols-2 gap-2">
+                        {[
+                          {
+                            label: 'broken at',
+                            value: String(
+                              tamper.verification.brokenAt ?? '—',
+                            ),
+                          },
+                          {
+                            label: 'invalid hashes',
+                            value: String(tamper.verification.invalidHashes),
+                          },
+                          {
+                            label: 'signature',
+                            value: tamper.verification.signatureValid
+                              ? 'valid'
+                              : 'rejected',
+                          },
+                          {
+                            label: 'tampered root',
+                            value: `${tamper.tamperedRootHash.slice(0, 10)}…`,
+                          },
+                        ].map((item) => (
+                          <div
+                            key={item.label}
+                            className="rounded border border-red-500/20 bg-zinc-950/50 px-2 py-1.5"
+                          >
+                            <p className="font-mono text-[7px] uppercase tracking-[0.12em] text-red-300/70">
+                              {item.label}
+                            </p>
+                            <p className="mt-0.5 break-all font-mono text-[9px] text-red-200">
+                              {item.value}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                      <ul className="mt-1.5 max-h-40 divide-y divide-red-500/10 overflow-y-auto rounded border border-red-500/20">
+                        {receipt.receipt.entries.map((entry) => {
+                          const broken =
+                            (tamper.verification.brokenAt ??
+                              tamper.tamperAt) === entry.seq;
+                          return (
+                            <li
+                              key={`${entry.seq}-${entry.hash}`}
+                              className={[
+                                'px-2 py-1.5',
+                                broken ? 'bg-red-500/[0.1]' : '',
+                              ].join(' ')}
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono text-[7px] text-red-300/60">
+                                  {String(entry.seq).padStart(3, '0')}
+                                </span>
+                                <code
+                                  className={[
+                                    'truncate font-mono text-[8px]',
+                                    broken ? 'text-red-300' : 'text-zinc-400',
+                                  ].join(' ')}
+                                >
+                                  {entry.kind}
+                                </code>
+                                {broken && (
+                                  <span className="ml-auto inline-flex shrink-0 items-center gap-1 font-mono text-[7px] uppercase tracking-wider text-red-300">
+                                    <ShieldX className="size-2" aria-hidden />
+                                    broken link
+                                  </span>
+                                )}
+                              </div>
+                              <p
+                                className={[
+                                  'truncate font-mono text-[7px]',
+                                  broken ? 'text-red-300/80' : 'text-zinc-600',
+                                ].join(' ')}
+                              >
+                                {entry.hash}
+                              </p>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      <p className="mt-1.5 font-mono text-[7.5px] leading-snug text-red-300/60">
+                        In-memory only · the persisted ledger is untouched.
+                      </p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="mt-2 inline-flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[0.12em] text-zinc-600">
+                  <Loader2 className="size-3 animate-spin" aria-hidden />
+                  reading hash chain…
+                </p>
+              )}
             </section>
 
             <section className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 p-4">
@@ -1083,6 +1433,194 @@ export function HandoverComplete() {
           </p>
         </div>
       </footer>
+
+      {inspectorOpen && lastDispatch && (
+        <div
+          className="fixed inset-0 z-[80] grid place-items-center bg-zinc-950/85 p-4 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setInspectorOpen(false)}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Integration dispatch inspector"
+            className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-[0_60px_160px_-40px_rgba(0,0,0,1)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-zinc-800/80 px-4 py-4 sm:px-5">
+              <div>
+                <p className="inline-flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[0.18em] text-sky-300">
+                  <ShieldCheck className="size-3.5" aria-hidden />
+                  dispatch inspector · {lastDispatch.integration.target}
+                </p>
+                <h2 className="mt-1.5 text-[19px] font-semibold tracking-tight text-zinc-100">
+                  {lastDispatch.integration.reference}
+                </h2>
+                <p className="mt-1 font-mono text-[9px] text-zinc-500">
+                  {lastDispatch.integration.mode === 'live'
+                    ? 'live external write'
+                    : 'signed sandbox dispatch · no external write'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInspectorOpen(false)}
+                className="grid size-8 shrink-0 place-items-center rounded-lg border border-zinc-800 text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-200"
+                aria-label="Close dispatch inspector"
+              >
+                <X className="size-4" aria-hidden />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {[
+                  { label: 'target', value: lastDispatch.integration.target },
+                  { label: 'mode', value: lastDispatch.integration.mode },
+                  {
+                    label: 'reference',
+                    value: lastDispatch.integration.reference,
+                  },
+                  {
+                    label: 'artifact SHA-256',
+                    value: lastDispatch.integration.artifactSha256,
+                  },
+                  {
+                    label: 'chain entries',
+                    value: String(lastDispatch.ledger.entries),
+                  },
+                  {
+                    label: 'root hash',
+                    value: `${lastDispatch.ledger.rootHash.slice(0, 22)}…`,
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-lg border border-zinc-800/70 bg-zinc-900/40 px-2.5 py-2"
+                  >
+                    <p className="font-mono text-[7.5px] uppercase tracking-[0.14em] text-zinc-500">
+                      {item.label}
+                    </p>
+                    <p className="mt-0.5 break-all font-mono text-[10px] text-zinc-200">
+                      {item.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-3 rounded-lg border border-zinc-800/70 bg-zinc-900/30 px-3 py-2.5">
+                <p className="font-mono text-[7.5px] uppercase tracking-[0.14em] text-zinc-500">
+                  HMAC signature
+                </p>
+                <p className="mt-1 break-all font-mono text-[9px] text-emerald-300/80">
+                  {lastDispatch.integration.signature}
+                </p>
+              </div>
+
+              {lastDispatch.integration.url && (
+                <p className="mt-2 break-all font-mono text-[9px] text-sky-300/80">
+                  {lastDispatch.integration.url}
+                </p>
+              )}
+
+              {lastDispatch.artifact ? (
+                <div className="mt-3 overflow-hidden rounded-lg border border-zinc-800/70">
+                  <div className="flex items-center justify-between border-b border-zinc-800/70 bg-zinc-900/40 px-3 py-2">
+                    <p className="font-mono text-[8px] uppercase tracking-[0.14em] text-zinc-500">
+                      server-built artifact
+                    </p>
+                    <span className="font-mono text-[8px] text-zinc-600">
+                      {lastDispatch.artifact.bytes} bytes ·{' '}
+                      {lastDispatch.artifact.patchBytes} patch
+                    </span>
+                  </div>
+                  <pre className="max-h-72 overflow-auto px-3 py-2.5 font-mono text-[9px] leading-relaxed whitespace-pre-wrap text-zinc-400">
+                    {lastDispatch.artifact.markdown.slice(0, 4000)}
+                  </pre>
+                </div>
+              ) : (
+                <p className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.05] px-3 py-2 text-[10.5px] leading-relaxed text-amber-200/80">
+                  The manager lens has no artifact payload. Only the developer
+                  lens receives the server-built Markdown and patch bundle.
+                </p>
+              )}
+
+              {lastDispatch.integration.target === 'github' &&
+                role === 'junior' && (
+                  <div className="mt-3 grid gap-2">
+                    <div className="overflow-hidden rounded-lg border border-zinc-800/70">
+                      <div className="flex items-center justify-between border-b border-zinc-800/70 bg-zinc-900/40 px-3 py-2">
+                        <p className="font-mono text-[8px] uppercase tracking-[0.14em] text-zinc-500">
+                          PR preview
+                        </p>
+                        <span className="font-mono text-[8px] text-zinc-600">
+                          {prBranches.length} branch
+                          {prBranches.length === 1 ? '' : 'es'}
+                        </span>
+                      </div>
+                      <div className="px-3 py-2">
+                        <p className="font-mono text-[7.5px] uppercase tracking-[0.12em] text-zinc-500">
+                          branch
+                        </p>
+                        <p className="mt-0.5 break-all font-mono text-[9px] text-sky-300/80">
+                          {prBranches.length > 0
+                            ? prBranches.join(' · ')
+                            : lastDispatch.integration.reference}
+                        </p>
+                      </div>
+                      <div className="border-t border-zinc-800/70 px-3 py-2">
+                        <p className="font-mono text-[7.5px] uppercase tracking-[0.12em] text-zinc-500">
+                          deterministic diff
+                        </p>
+                        <pre className="mt-1 max-h-40 overflow-auto whitespace-pre font-mono text-[8.5px] leading-relaxed text-zinc-400">
+                          {patchBundle.trim().length > 0
+                            ? patchBundle.slice(0, 1800)
+                            : '# no deterministic patches for this lens'}
+                        </pre>
+                      </div>
+                    </div>
+
+                    {ciPreviews.length > 0 && (
+                      <div className="rounded-lg border border-zinc-800/70 bg-zinc-900/30 px-3 py-2">
+                        <p className="font-mono text-[8px] uppercase tracking-[0.14em] text-zinc-500">
+                          CI preview
+                        </p>
+                        <ul className="mt-1.5 flex flex-col gap-1.5">
+                          {ciPreviews.map((pkg) => (
+                            <li key={pkg.doubtId}>
+                              <code className="block overflow-x-auto whitespace-pre rounded border border-zinc-800/70 bg-zinc-950/60 px-2 py-1 font-mono text-[8.5px] text-emerald-200/90">
+                                {pkg.verification?.command}
+                              </code>
+                              <span className="mt-0.5 block font-mono text-[7.5px] text-zinc-500">
+                                expect {pkg.verification?.expect} · {pkg.doubtId}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+            </div>
+            <div className="flex items-center justify-between gap-2 border-t border-zinc-800/80 px-4 py-3 sm:px-5">
+              <p className="font-mono text-[8px] uppercase tracking-[0.12em] text-zinc-600">
+                persisted in session_integrations · audited
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setInspectorOpen(false);
+                  setView('triage');
+                  setSecurityOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-1.5 font-mono text-[8.5px] uppercase tracking-[0.12em] text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200"
+              >
+                <ShieldCheck className="size-3" aria-hidden />
+                verify chain
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 z-[60] flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-center font-mono text-[10px] text-emerald-300 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.9)] backdrop-blur animate-in fade-in slide-in-from-bottom-2">

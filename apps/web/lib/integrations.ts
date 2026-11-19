@@ -1,0 +1,549 @@
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+
+import type {
+  IntegrationArtifactPreview,
+  IntegrationListResponse,
+  IntegrationMode,
+  IntegrationRecord,
+  IntegrationTarget,
+  TriageBoard,
+} from '@/lib/api-types';
+import { buildBoard } from '@/db/board';
+import { getDb } from '@/db/client';
+import { appendAudit, type SessionRecord } from '@/db/session';
+import {
+  appendLedgerEntry,
+  sha256Hex,
+  sessionRefFor,
+} from '@/lib/crypto-ledger';
+import { buildRemediationPackage } from '@/lib/remediation';
+import type { Doubt, Role } from '@/lib/triage-types';
+
+/**
+ * Round 3 one-click integrations.
+ *
+ * The artifact is always built on the server from the signed session's board.
+ * The browser never supplies the content, the target or the role. When a live
+ * token is absent, Relay returns a cryptographically signed sandbox dispatch
+ * instead of pretending an external write happened.
+ */
+
+export const DISPATCH_FORMULA =
+  'HMAC-SHA256(sessionRef|target|reference|artifactSha256|createdAt)';
+
+function dispatchSecret(): string {
+  return (
+    process.env.RELAY_RECEIPT_SECRET ??
+    process.env.RELAY_SESSION_SECRET ??
+    'relay-demo-2026-local-hmac-secret-do-not-use-in-production'
+  );
+}
+
+function signDispatch(
+  sessionRef: string,
+  target: IntegrationTarget,
+  reference: string,
+  artifactSha256: string,
+  createdAt: string,
+): string {
+  return createHmac('sha256', dispatchSecret())
+    .update(
+      `${sessionRef}|${target}|${reference}|${artifactSha256}|${createdAt}`,
+    )
+    .digest('base64url');
+}
+
+export function canDispatchGithub(role: Role): boolean {
+  return role === 'junior';
+}
+
+/** Recompute a sandbox dispatch signature from its stored fields. */
+export function verifyDispatchSignature(input: {
+  sessionId: string;
+  target: IntegrationTarget;
+  reference: string;
+  artifactSha256: string;
+  createdAt: string;
+  signature: string;
+}): boolean {
+  const expected = signDispatch(
+    sessionRefFor(input.sessionId),
+    input.target,
+    input.reference,
+    input.artifactSha256,
+    input.createdAt,
+  );
+  const left = Buffer.from(expected);
+  const right = Buffer.from(input.signature);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
+export function githubDispatchStatus(role: Role): number {
+  return canDispatchGithub(role) ? 200 : 403;
+}
+
+function resolutionLabel(doubt: Doubt): string {
+  return (
+    doubt.resolutions.find((item) => item.id === doubt.resolvedWith)?.label ??
+    'Resolved'
+  );
+}
+
+export function buildServerArtifact(board: TriageBoard): string {
+  const role = board.session.role;
+  const resolved = board.doubts.filter((doubt) => doubt.status === 'resolved');
+  const stamp = new Date().toISOString();
+  const sources = resolved.reduce(
+    (sum, doubt) => sum + doubt.evidence.length,
+    0,
+  );
+
+  const lines = [
+    '# Relay handover — relay-labs',
+    '',
+    `> Signed handover dispatch · ${stamp}`,
+    `> Role lens: ${role} · session ${board.session.id.slice(0, 8)}`,
+    '',
+    `${resolved.length} decisions · ${sources} sources traced · readiness ${board.session.readiness}%`,
+    '',
+  ];
+
+  resolved.forEach((doubt, index) => {
+    lines.push(`## ${index + 1}. ${doubt.title}`);
+    lines.push('');
+    lines.push(`- Area: ${doubt.area}`);
+    lines.push(`- Severity: ${doubt.severity}`);
+    lines.push(`- Claim: ${doubt.claim}`);
+    lines.push(`- Decision: ${resolutionLabel(doubt)}`);
+    if (doubt.decision?.type) lines.push(`- Decision type: ${doubt.decision.type}`);
+    if (doubt.decision?.rationale) {
+      lines.push(`- Rationale: ${doubt.decision.rationale}`);
+    }
+    if (doubt.decision?.owner) lines.push(`- Owner: ${doubt.decision.owner}`);
+    if (doubt.decision?.signoffName) {
+      lines.push(`- Sign-off: ${doubt.decision.signoffName}`);
+    }
+    if (doubt.decision) {
+      lines.push(`- Verification: ${doubt.decision.verification}`);
+    }
+    if (doubt.origin) lines.push(`- Origin: ${doubt.origin}`);
+
+    if (role === 'junior' && doubt.implementation) {
+      lines.push(`- Repository: ${doubt.implementation.repo}`);
+      lines.push(`- Branch: ${doubt.implementation.branch}`);
+      lines.push(`- Reference: ${doubt.implementation.pr}`);
+      if (doubt.implementation.files.length > 0) {
+        lines.push(`- Files: ${doubt.implementation.files.join(', ')}`);
+      }
+    }
+    if (role === 'manager' && doubt.impact) {
+      lines.push(`- Budget: ${doubt.impact.budget}`);
+      lines.push(`- Timeline: ${doubt.impact.timeline}`);
+      lines.push(`- Risk: ${doubt.impact.risk}`);
+    }
+    if (doubt.evidence.length > 0) {
+      lines.push(
+        `- Citations: ${doubt.evidence
+          .map((item) => `${item.source}/${item.author}`)
+          .join(' · ')}`,
+      );
+    }
+    lines.push('');
+  });
+
+  lines.push('---');
+  lines.push('');
+  lines.push(
+    '_Generated by Relay. Read-only verification across Slack, Jira, GitHub, and Notion._',
+  );
+  lines.push(`_Chain formula: ${board.meta.ledger.rootHash.slice(0, 16)}…_`);
+  return lines.join('\n');
+}
+
+export function buildServerPatchBundle(board: TriageBoard): string {
+  if (board.session.role !== 'junior') return '';
+  const resolved = board.doubts.filter((doubt) => doubt.status === 'resolved');
+  const sections = resolved
+    .map((doubt) =>
+      buildRemediationPackage(
+        doubt.id,
+        doubt.title,
+        doubt.area,
+        doubt.severity,
+        'junior',
+      ),
+    )
+    .filter((item) => item.allowed && item.patch)
+    .map(
+      (item) =>
+        `# ${item.doubtId} — ${item.title}\n# ${item.area} · ${item.severity}\n${item.patch?.diff ?? ''}`,
+    );
+  return sections.length
+    ? `${sections.join('\n\n')}\n`
+    : '# No deterministic patches are available for this lens.\n';
+}
+
+interface DispatchInput {
+  session: SessionRecord;
+  target: IntegrationTarget;
+  board: TriageBoard;
+  markdown: string;
+  patch: string;
+  live: { url: string; reference: string } | null;
+  detail?: string;
+}
+
+export function persistDispatch(input: DispatchInput): IntegrationRecord {
+  const db = getDb();
+  const createdAt = new Date().toISOString();
+  const artifact =
+    input.target === 'github'
+      ? `${input.markdown}\n\n---\n\n${input.patch}`
+      : input.markdown;
+  const artifactSha256 = sha256Hex(artifact);
+  const sessionRef = sessionRefFor(input.session.id);
+  const mode: IntegrationMode = input.live ? 'live' : 'sandbox';
+  const reference =
+    input.live?.reference ??
+    `${input.target === 'github' ? 'PR' : 'NOTION'}-${sha256Hex(
+      `${sessionRef}|${input.target}|${artifactSha256}`,
+    )
+      .slice(0, 10)
+      .toUpperCase()}`;
+  const signature = signDispatch(
+    sessionRef,
+    input.target,
+    reference,
+    artifactSha256,
+    createdAt,
+  );
+  const url =
+    input.live?.url ??
+    `relay://sandbox/${input.target}/${reference.toLowerCase()}`;
+  const id = `int-${randomUUID()}`;
+
+  db.prepare(
+    `INSERT INTO session_integrations (
+       id, session_id, target, mode, status, reference, url, signature,
+       artifact_sha256, artifact, payload_json, created_at
+     ) VALUES (?, ?, ?, ?, 'dispatched', ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    input.session.id,
+    input.target,
+    mode,
+    reference,
+    url,
+    signature,
+    artifactSha256,
+    artifact,
+    JSON.stringify({
+      formula: DISPATCH_FORMULA,
+      sessionRef,
+      target: input.target,
+      mode,
+      artifactSha256,
+      detail: input.detail ?? null,
+    }),
+    createdAt,
+  );
+
+  appendAudit(
+    input.session.id,
+    input.session.role,
+    'integration.dispatch',
+    null,
+    `target=${input.target} mode=${mode} ref=${reference} sha=${artifactSha256.slice(
+      0,
+      12,
+    )}`,
+  );
+  appendLedgerEntry(input.session.id, 'integration.dispatch', null, {
+    target: input.target,
+    mode,
+    reference,
+    artifactSha256,
+    signature,
+  });
+
+  return {
+    id,
+    target: input.target,
+    mode,
+    status: 'dispatched',
+    reference,
+    url,
+    signature,
+    artifactSha256,
+    createdAt,
+    detail: input.detail,
+  };
+}
+
+async function githubApi<T>(
+  path: string,
+  init: RequestInit,
+): Promise<T> {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) throw new Error('GITHUB_TOKEN is not configured');
+  const response = await fetch(`https://api.github.com${path}`, {
+    ...init,
+    headers: {
+      accept: 'application/vnd.github+json',
+      'user-agent': 'relay-handover-agent/3.0',
+      authorization: `Bearer ${token}`,
+      'x-github-api-version': '2022-11-28',
+      ...(init.headers ?? {}),
+    },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`GitHub ${response.status}: ${text.slice(0, 160)}`);
+  }
+  return (await response.json()) as T;
+}
+
+async function liveGithubPr(
+  session: SessionRecord,
+  markdown: string,
+  patch: string,
+): Promise<{ url: string; reference: string } | null> {
+  const repo = process.env.GITHUB_PR_REPO;
+  if (!process.env.GITHUB_TOKEN || !repo) return null;
+
+  try {
+    const meta = await githubApi<{ default_branch: string }>(
+      `/repos/${repo}`,
+      { method: 'GET' },
+    );
+    const base = process.env.GITHUB_PR_BASE ?? meta.default_branch;
+    const ref = await githubApi<{ object: { sha: string } }>(
+      `/repos/${repo}/git/ref/heads/${encodeURIComponent(base)}`,
+      { method: 'GET' },
+    );
+    const branch = `relay/handover-${session.id.slice(0, 8)}-${Date.now()}`;
+
+    await githubApi(`/repos/${repo}/git/refs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ref: `refs/heads/${branch}`,
+        sha: ref.object.sha,
+      }),
+    });
+
+    const put = async (path: string, content: string) =>
+      githubApi(`/repos/${repo}/contents/${path}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          message: `relay: handover artifact for ${session.id.slice(0, 8)}`,
+          content: Buffer.from(content, 'utf8').toString('base64'),
+          branch,
+        }),
+      });
+
+    await put('.relay/handover.md', markdown);
+    await put('.relay/handover.patch', patch || '# no patch bundle\n');
+
+    const pr = await githubApi<{ number: number; html_url: string }>(
+      `/repos/${repo}/pulls`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: `Relay handover · ${session.id.slice(0, 8)}`,
+          head: branch,
+          base,
+          body: 'Signed Relay handover artifact. Generated from the session-scoped, role-filtered decision record.',
+        }),
+      },
+    );
+
+    return { url: pr.html_url, reference: `#${pr.number}` };
+  } catch (error) {
+    return {
+      url: '',
+      reference: `LIVE-FAILED-${String(
+        error instanceof Error ? error.message : 'unknown',
+      ).slice(0, 48)}`,
+    };
+  }
+}
+
+async function liveNotion(
+  board: TriageBoard,
+  markdown: string,
+): Promise<{ url: string; reference: string } | null> {
+  const token = process.env.NOTION_TOKEN;
+  const parent = process.env.NOTION_PARENT_PAGE_ID;
+  if (!token || !parent) return null;
+
+  try {
+    const title = `Relay handover · ${board.session.id.slice(0, 8)}`;
+    const blocks = markdown
+      .split('\n')
+      .slice(0, 80)
+      .filter((line) => line.trim().length > 0)
+      .map((line) => ({
+        object: 'block',
+        type: 'paragraph',
+        paragraph: {
+          rich_text: [
+            {
+              type: 'text',
+              text: { content: line.slice(0, 1800) },
+            },
+          ],
+        },
+      }));
+
+    const response = await fetch('https://api.notion.com/v1/pages', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'notion-version': '2022-06-28',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        parent: { page_id: parent },
+        properties: {
+          title: {
+            title: [{ type: 'text', text: { content: title } }],
+          },
+        },
+        children: blocks,
+      }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(12_000),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Notion ${response.status}`);
+    }
+    const page = (await response.json()) as { id: string; url?: string };
+    return {
+      url: page.url ?? `https://notion.so/${page.id.replace(/-/g, '')}`,
+      reference: page.id,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function dispatchIntegration(
+  session: SessionRecord,
+  target: IntegrationTarget,
+): Promise<{
+  integration: IntegrationRecord;
+  artifact: IntegrationArtifactPreview | null;
+}> {
+  const board = buildBoard(session);
+  const markdown = buildServerArtifact(board);
+  const patch = buildServerPatchBundle(board);
+
+  const live =
+    target === 'github'
+      ? await liveGithubPr(session, markdown, patch)
+      : await liveNotion(board, markdown);
+
+  const integration = persistDispatch({
+    session,
+    target,
+    board,
+    markdown,
+    patch,
+    live: live && live.url ? live : null,
+    detail:
+      live && live.url
+        ? 'live external write completed'
+        : process.env.GITHUB_TOKEN || process.env.NOTION_TOKEN
+          ? 'signed sandbox dispatch · live target not fully configured'
+          : 'signed sandbox dispatch · no external token configured',
+  });
+
+  return {
+    integration,
+    artifact:
+      session.role === 'junior'
+        ? {
+            title:
+              target === 'github'
+                ? 'Signed GitHub PR bundle'
+                : 'Signed Notion handover page',
+            markdown,
+            bytes: Buffer.byteLength(markdown, 'utf8'),
+            patchBytes: Buffer.byteLength(patch, 'utf8'),
+          }
+        : null,
+  };
+}
+
+interface IntegrationRow {
+  id: string;
+  target: IntegrationTarget;
+  mode: IntegrationMode;
+  status: 'dispatched' | 'failed';
+  reference: string;
+  url: string | null;
+  signature: string;
+  artifact_sha256: string;
+  created_at: string;
+}
+
+export function listIntegrations(
+  session: SessionRecord,
+): IntegrationListResponse {
+  const view =
+    session.role === 'manager'
+      ? 'v_integration_manager'
+      : 'v_integration_junior';
+  const rows = getDb()
+    .prepare(
+      `SELECT id, target, mode, status, reference, url, signature,
+              artifact_sha256, created_at
+       FROM ${view} WHERE session_id = ? ORDER BY created_at DESC`,
+    )
+    .all(session.id) as unknown as IntegrationRow[];
+
+  const integrations: IntegrationRecord[] = rows.map((row) => ({
+    id: row.id,
+    target: row.target,
+    mode: row.mode,
+    status: row.status,
+    reference: row.reference,
+    url: row.url ?? undefined,
+    signature: row.signature,
+    artifactSha256: row.artifact_sha256,
+    createdAt: row.created_at,
+    detail:
+      row.mode === 'live'
+        ? 'live external write'
+        : 'signed sandbox dispatch (no external write)',
+  }));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    role: session.role,
+    integrations,
+    counts: {
+      total: integrations.length,
+      github: integrations.filter((item) => item.target === 'github').length,
+      notion: integrations.filter((item) => item.target === 'notion').length,
+      live: integrations.filter((item) => item.mode === 'live').length,
+      sandbox: integrations.filter((item) => item.mode === 'sandbox').length,
+    },
+    capabilities: {
+      githubDispatchRole: 'junior',
+      managerGithubForbidden: true,
+      notionRoles: ['manager', 'junior'],
+      liveGithub: Boolean(process.env.GITHUB_TOKEN && process.env.GITHUB_PR_REPO),
+      liveNotion: Boolean(
+        process.env.NOTION_TOKEN && process.env.NOTION_PARENT_PAGE_ID,
+      ),
+    },
+  };
+}

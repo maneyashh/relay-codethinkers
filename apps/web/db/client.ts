@@ -4,7 +4,11 @@ import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import seed from './seed.json';
-import { SCHEMA_SQL } from './schema';
+import {
+  BASE_SCHEMA_SQL,
+  SCHEMA_VERSION,
+  VIEWS_SQL,
+} from './schema';
 
 export const PROJECT_ID = 'relay-labs-v2';
 
@@ -39,6 +43,7 @@ type SeededEvidence = {
   channel?: string;
   filePath?: string;
   commit?: string;
+  diff?: string;
   url?: string;
 };
 
@@ -83,9 +88,36 @@ const globalForDb = globalThis as RelayGlobal;
  *   3. `<tmpdir>/relay.db` (Vercel, Lambda, read-only deployments)
  *   4. `:memory:` (last resort; the app still boots and seeds itself)
  */
+/**
+ * Additive migrations for a database created by an earlier Relay version.
+ * Views are dropped and recreated afterwards so a new column or role view is
+ * never hidden by `CREATE VIEW IF NOT EXISTS`.
+ */
+function migrate(db: DatabaseSync): void {
+  const columnNames = (table: string): Set<string> => {
+    const rows = db.prepare(`PRAGMA table_info(${table})`).all() as {
+      name: string;
+    }[];
+    return new Set(rows.map((row) => row.name));
+  };
+
+  const ensureColumn = (table: string, column: string, ddl: string) => {
+    if (!columnNames(table).has(column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    }
+  };
+
+  // Schema v2 -> v3: real diffs become part of the developer projection.
+  ensureColumn('evidence', 'diff', 'TEXT');
+  ensureColumn('session_signals', 'diff', 'TEXT');
+}
+
 function openAt(path: string): DatabaseSync {
   const db = new DatabaseSync(path);
-  db.exec(SCHEMA_SQL);
+  db.exec(BASE_SCHEMA_SQL);
+  migrate(db);
+  db.exec(VIEWS_SQL);
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   seedIfEmpty(db);
   return db;
 }
@@ -154,8 +186,8 @@ function seedIfEmpty(db: DatabaseSync) {
   const insertEvidence = db.prepare(`
     INSERT OR IGNORE INTO evidence (
       id, doubt_id, position, source, author, authored_at, quote, redacted,
-      audience, polarity, relevance, channel, file_path, commit_ref, url
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      audience, polarity, relevance, channel, file_path, commit_ref, diff, url
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertResolution = db.prepare(`
     INSERT OR IGNORE INTO resolutions (doubt_id, resolution_id, label, description)
@@ -212,6 +244,7 @@ function seedIfEmpty(db: DatabaseSync) {
           item.channel ?? null,
           item.filePath ?? null,
           item.commit ?? null,
+          item.diff ?? null,
           item.url ?? null,
         );
       });

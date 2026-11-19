@@ -6,6 +6,7 @@ import {
   Check,
   Columns3,
   Database,
+  Download,
   EyeOff,
   Fingerprint,
   Gauge,
@@ -24,13 +25,16 @@ import { useCallback, useEffect, useState } from 'react';
 
 import type {
   AuditResponse,
+  ReceiptResponse,
+  ReceiptTamperReport,
+  ReceiptVerification,
   SecurityCheck,
   SecurityProjection,
   SecurityReport,
 } from '@/lib/api-types';
 import { useConsole } from '@/stores/console';
 
-type TabId = 'boundary' | 'payload' | 'signals' | 'audit';
+type TabId = 'boundary' | 'payload' | 'signals' | 'receipt' | 'audit';
 
 const TABS: {
   id: TabId;
@@ -40,6 +44,7 @@ const TABS: {
   { id: 'boundary', label: 'Boundary', icon: Lock },
   { id: 'payload', label: 'Payload diff', icon: Columns3 },
   { id: 'signals', label: 'Live signals', icon: Zap },
+  { id: 'receipt', label: 'Receipt', icon: KeyRound },
   { id: 'audit', label: 'Audit trail', icon: ScrollText },
 ];
 
@@ -48,6 +53,8 @@ const CATEGORY_LABEL: Record<SecurityCheck['category'], string> = {
   column: 'Column-level filtering',
   session: 'Session integrity',
   synthesis: 'Signal synthesis',
+  chain: 'Hash-chain receipt',
+  integration: 'Integration dispatch',
 };
 
 const CATEGORY_ICON: Record<SecurityCheck['category'], typeof Rows3> = {
@@ -55,6 +62,8 @@ const CATEGORY_ICON: Record<SecurityCheck['category'], typeof Rows3> = {
   column: Columns3,
   session: Fingerprint,
   synthesis: Activity,
+  chain: Fingerprint,
+  integration: KeyRound,
 };
 
 function Metric({
@@ -171,23 +180,40 @@ export function SecurityProof() {
   const open = useConsole((s) => s.securityOpen);
   const setOpen = useConsole((s) => s.setSecurityOpen);
   const setChaosOpen = useConsole((s) => s.setChaosOpen);
+  const requestedTab = useConsole((s) => s.securityTab);
 
   const [tab, setTab] = useState<TabId>('boundary');
   const [report, setReport] = useState<SecurityReport | null>(null);
   const [audit, setAudit] = useState<AuditResponse | null>(null);
+  const [receipt, setReceipt] = useState<ReceiptResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [tamperOpen, setTamperOpen] = useState(false);
+  const [tamperReport, setTamperReport] = useState<ReceiptTamperReport | null>(
+    null,
+  );
+  const [simulatingTamper, setSimulatingTamper] = useState(false);
+  const [externalCheck, setExternalCheck] =
+    useState<ReceiptVerification | null>(null);
+  const [verifyingReceipt, setVerifyingReceipt] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     setAuditError(null);
+    setReceiptError(null);
+    setExternalCheck(null);
+    setTamperReport(null);
+    setTamperOpen(false);
     try {
-      const [reportResult, auditResult] = await Promise.allSettled([
-        fetch('/api/security/verify', { cache: 'no-store' }),
-        fetch('/api/security/audit', { cache: 'no-store' }),
-      ]);
+      const [reportResult, auditResult, receiptResult] =
+        await Promise.allSettled([
+          fetch('/api/security/verify', { cache: 'no-store' }),
+          fetch('/api/security/audit', { cache: 'no-store' }),
+          fetch('/api/security/receipt', { cache: 'no-store' }),
+        ]);
 
       if (
         reportResult.status === 'fulfilled' &&
@@ -207,6 +233,16 @@ export function SecurityProof() {
       } else {
         setAuditError('Audit trail unavailable for this session');
       }
+
+      if (receiptResult.status === 'fulfilled' && receiptResult.value.ok) {
+        setReceipt((await receiptResult.value.json()) as ReceiptResponse);
+      } else {
+        const status =
+          receiptResult.status === 'fulfilled'
+            ? receiptResult.value.status
+            : 'network';
+        setReceiptError(`Receipt unavailable (${status})`);
+      }
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : 'Security probe failed',
@@ -222,7 +258,10 @@ export function SecurityProof() {
       void load();
     });
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') {
+        setOpen(false);
+        useConsole.setState({ securityTab: null });
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => {
@@ -230,6 +269,18 @@ export function SecurityProof() {
       window.removeEventListener('keydown', onKey);
     };
   }, [open, load, setOpen]);
+
+  const activeTab: TabId = requestedTab ?? tab;
+
+  function selectTab(next: TabId) {
+    setTab(next);
+    if (requestedTab) useConsole.setState({ securityTab: null });
+  }
+
+  function closeInspector() {
+    setOpen(false);
+    useConsole.setState({ securityTab: null });
+  }
 
   const grouped = report
     ? (Object.keys(CATEGORY_LABEL) as SecurityCheck['category'][]).map(
@@ -243,6 +294,84 @@ export function SecurityProof() {
   const passCount = report
     ? report.checks.filter((check) => check.pass).length
     : 0;
+
+  function downloadReceipt() {
+    if (!receipt) return;
+    const blob = new Blob([JSON.stringify(receipt.receipt, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${receipt.receipt.sessionRef}.relay.sig`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function verifyReceipt() {
+    if (!receipt) return;
+    setVerifyingReceipt(true);
+    setExternalCheck(null);
+    try {
+      const response = await fetch('/api/security/receipt', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receipt: receipt.receipt }),
+      });
+      const data = (await response.json()) as {
+        verification?: ReceiptVerification;
+        error?: string;
+      };
+      if (!response.ok || !data.verification) {
+        throw new Error(data.error ?? `Verifier returned ${response.status}`);
+      }
+      setExternalCheck(data.verification);
+    } catch (cause) {
+      setReceiptError(
+        cause instanceof Error ? cause.message : 'Receipt verifier failed',
+      );
+    } finally {
+      setVerifyingReceipt(false);
+    }
+  }
+
+  async function simulateTamperAttack() {
+    if (!receipt) return;
+    if (tamperOpen) {
+      setTamperOpen(false);
+      return;
+    }
+    setSimulatingTamper(true);
+    setReceiptError(null);
+    try {
+      const response = await fetch('/api/security/receipt', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receipt: receipt.receipt, tamper: true }),
+      });
+      const data = (await response.json()) as {
+        tamper?: ReceiptTamperReport | null;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(data.error ?? `Verifier returned ${response.status}`);
+      }
+      setTamperReport(data.tamper ?? receipt.tamper);
+      setTamperOpen(true);
+    } catch (cause) {
+      setReceiptError(
+        cause instanceof Error ? cause.message : 'Tamper simulation failed',
+      );
+    } finally {
+      setSimulatingTamper(false);
+    }
+  }
+
+  const effectiveTamper = tamperReport ?? receipt?.tamper ?? null;
 
   return (
     <>
@@ -260,7 +389,7 @@ export function SecurityProof() {
       {open && (
         <div
           className="fixed inset-0 z-[120] grid place-items-center bg-zinc-950/88 p-3 backdrop-blur-sm animate-in fade-in duration-200 sm:p-6"
-          onClick={() => setOpen(false)}
+          onClick={closeInspector}
           role="presentation"
         >
           <div
@@ -286,7 +415,7 @@ export function SecurityProof() {
               </div>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={closeInspector}
                 className="grid size-8 shrink-0 place-items-center rounded-lg border border-zinc-800 text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-200"
                 aria-label="Close security inspector"
               >
@@ -299,11 +428,11 @@ export function SecurityProof() {
                 <button
                   key={id}
                   type="button"
-                  onClick={() => setTab(id)}
-                  aria-pressed={tab === id}
+                  onClick={() => selectTab(id)}
+                  aria-pressed={activeTab === id}
                   className={[
                     'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-mono text-[8.5px] uppercase tracking-[0.12em] transition',
-                    tab === id
+                    activeTab === id
                       ? 'bg-zinc-800 text-zinc-100'
                       : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300',
                   ].join(' ')}
@@ -348,7 +477,7 @@ export function SecurityProof() {
                 </div>
               )}
 
-              {report && !loading && tab === 'boundary' && (
+              {report && !loading && activeTab === 'boundary' && (
                 <>
                   <div className="grid gap-2 sm:grid-cols-3">
                     {[
@@ -425,7 +554,7 @@ export function SecurityProof() {
                 </>
               )}
 
-              {report && !loading && tab === 'payload' && (
+              {report && !loading && activeTab === 'payload' && (
                 <>
                   <div className="grid gap-2 sm:grid-cols-3">
                     {[
@@ -546,7 +675,7 @@ export function SecurityProof() {
                 </>
               )}
 
-              {report && !loading && tab === 'signals' && (
+              {report && !loading && activeTab === 'signals' && (
                 <>
                   <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.05] p-3.5">
                     <div className="flex items-start gap-2">
@@ -612,6 +741,46 @@ export function SecurityProof() {
                     ))}
                   </div>
 
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <div className="rounded-xl border border-sky-500/20 bg-sky-500/[0.04] px-3 py-2.5">
+                      <p className="font-mono text-[8px] uppercase tracking-[0.14em] text-sky-300/80">
+                        live github findings
+                      </p>
+                      <p className="mt-1 font-mono text-[18px] font-medium text-zinc-100">
+                        {report.live.total}
+                      </p>
+                      <p className="mt-0.5 font-mono text-[8.5px] text-zinc-500">
+                        {report.live.managerVisible} manager ·{' '}
+                        {report.live.juniorVisible} developer ·{' '}
+                        {report.live.technicalKeyLeaks} technical key leaks
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.04] px-3 py-2.5">
+                      <p className="font-mono text-[8px] uppercase tracking-[0.14em] text-violet-300/80">
+                        hash-chain receipt
+                      </p>
+                      <p className="mt-1 font-mono text-[18px] font-medium text-zinc-100">
+                        {report.chain.entries}
+                      </p>
+                      <p className="mt-0.5 truncate font-mono text-[8.5px] text-zinc-500">
+                        root · {report.chain.rootHash.slice(0, 18)}…
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] px-3 py-2.5">
+                      <p className="font-mono text-[8px] uppercase tracking-[0.14em] text-emerald-300/80">
+                        integration dispatches
+                      </p>
+                      <p className="mt-1 font-mono text-[18px] font-medium text-zinc-100">
+                        {report.integrations.total}
+                      </p>
+                      <p className="mt-0.5 font-mono text-[8.5px] text-zinc-500">
+                        {report.integrations.github} GitHub ·{' '}
+                        {report.integrations.notion} Notion · manager gate{' '}
+                        {report.integrations.managerGithubStatus}
+                      </p>
+                    </div>
+                  </div>
+
                   {report.signals.total === 0 ? (
                     <div className="mt-3 rounded-xl border border-dashed border-zinc-800/80 p-6 text-center">
                       <Zap
@@ -629,7 +798,7 @@ export function SecurityProof() {
                       <button
                         type="button"
                         onClick={() => {
-                          setOpen(false);
+                          closeInspector();
                           setChaosOpen(true);
                         }}
                         className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-amber-300 transition hover:bg-amber-500/15"
@@ -656,7 +825,279 @@ export function SecurityProof() {
                 </>
               )}
 
-              {report && !loading && tab === 'audit' && (
+              {!loading && activeTab === 'receipt' && (
+                <>
+                  {receiptError && (
+                    <p className="rounded-lg border border-red-500/25 bg-red-500/[0.05] px-3 py-2 text-[11px] text-red-200/80">
+                      {receiptError}
+                    </p>
+                  )}
+
+                  {!receipt && !receiptError && (
+                    <div className="flex flex-col items-center gap-3 py-16">
+                      <Loader2
+                        className="size-6 animate-spin text-emerald-400"
+                        aria-hidden
+                      />
+                      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                        reading the SHA-256 ledger…
+                      </p>
+                    </div>
+                  )}
+
+                  {receipt && (
+                    <>
+                      <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/30 p-3.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Fingerprint
+                            className="size-3.5 text-emerald-400/80"
+                            aria-hidden
+                          />
+                          <p className="font-mono text-[8.5px] uppercase tracking-[0.16em] text-zinc-400">
+                            {receipt.receipt.artifact} ·{' '}
+                            {receipt.receipt.algorithm}
+                          </p>
+                          <span
+                            data-guide="chain-verified"
+                            className={[
+                              'ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider',
+                              receipt.verification.ok
+                                ? 'bg-emerald-500/10 text-emerald-300'
+                                : 'bg-red-500/10 text-red-300',
+                            ].join(' ')}
+                          >
+                            {receipt.verification.ok ? (
+                              <Check className="size-2.5" aria-hidden />
+                            ) : (
+                              <ShieldX className="size-2.5" aria-hidden />
+                            )}
+                            {receipt.verification.ok ? 'chain valid' : 'chain broken'}
+                          </span>
+                        </div>
+                        <div className="mt-2 grid gap-x-6 sm:grid-cols-2">
+                          <Metric
+                            label="entries"
+                            value={receipt.receipt.entryCount}
+                          />
+                          <Metric
+                            label="checked hashes"
+                            value={receipt.verification.checkedHashes}
+                          />
+                          <Metric
+                            label="genesis"
+                            value={`${receipt.receipt.genesisHash.slice(0, 20)}…`}
+                          />
+                          <Metric
+                            label="root"
+                            value={`${receipt.receipt.rootHash.slice(0, 20)}…`}
+                          />
+                          <Metric
+                            label="signature"
+                            value={`${receipt.receipt.signature.slice(0, 24)}…`}
+                          />
+                          <Metric
+                            label="signature valid"
+                            value={receipt.verification.signatureValid ? 'yes' : 'no'}
+                            danger={!receipt.verification.signatureValid}
+                          />
+                        </div>
+                        <p className="mt-2 break-all rounded-lg border border-zinc-800/70 bg-zinc-950/50 px-2.5 py-2 font-mono text-[8px] leading-relaxed text-zinc-500">
+                          {receipt.receipt.chainFormula}
+                        </p>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={downloadReceipt}
+                          data-guide="sig-download"
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-100 px-3 py-1.5 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-white"
+                        >
+                          <Download className="size-3" aria-hidden />
+                          .relay.sig
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void verifyReceipt()}
+                          disabled={verifyingReceipt}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900/60 px-3 py-1.5 font-mono text-[8.5px] uppercase tracking-[0.12em] text-zinc-300 transition hover:border-zinc-600 hover:text-zinc-100 disabled:cursor-wait disabled:opacity-50"
+                        >
+                          {verifyingReceipt ? (
+                            <Loader2 className="size-3 animate-spin" aria-hidden />
+                          ) : (
+                            <ShieldCheck className="size-3" aria-hidden />
+                          )}
+                          re-verify via API
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void simulateTamperAttack()}
+                          disabled={simulatingTamper}
+                          data-guide="tamper"
+                          className={[
+                            'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-mono text-[8.5px] uppercase tracking-[0.12em] transition disabled:cursor-wait disabled:opacity-60',
+                            tamperOpen
+                              ? 'border-red-500/40 bg-red-500/10 text-red-300'
+                              : 'border-amber-500/30 bg-amber-500/[0.07] text-amber-300 hover:bg-amber-500/10',
+                          ].join(' ')}
+                        >
+                          {simulatingTamper ? (
+                            <Loader2 className="size-3 animate-spin" aria-hidden />
+                          ) : (
+                            <ShieldX className="size-3" aria-hidden />
+                          )}
+                          {simulatingTamper
+                            ? 'tampering…'
+                            : tamperOpen
+                              ? 'restore clean receipt'
+                              : 'simulate tamper attack'}
+                        </button>
+                        <span className="font-mono text-[8px] uppercase tracking-[0.12em] text-zinc-600">
+                          {receipt.receipt.sessionRef}
+                        </span>
+                      </div>
+
+                      {externalCheck && (
+                        <div
+                          className={[
+                            'mt-3 rounded-xl border p-3',
+                            externalCheck.ok
+                              ? 'border-emerald-500/25 bg-emerald-500/[0.05]'
+                              : 'border-red-500/30 bg-red-500/[0.06]',
+                          ].join(' ')}
+                        >
+                          <p className="font-mono text-[8.5px] uppercase tracking-[0.14em] text-zinc-400">
+                            exported receipt re-verification
+                          </p>
+                          <p
+                            className={[
+                              'mt-1 text-[11.5px] leading-relaxed',
+                              externalCheck.ok ? 'text-emerald-200' : 'text-red-200',
+                            ].join(' ')}
+                          >
+                            {externalCheck.detail}
+                          </p>
+                        </div>
+                      )}
+
+                      {tamperOpen && effectiveTamper && (
+                        <div className="mt-3 rounded-xl border border-red-500/35 bg-red-500/[0.07] p-3.5 animate-in fade-in duration-150" data-guide="tamper-report">
+                          <p className="inline-flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[0.14em] text-red-300">
+                            <ShieldX className="size-3" aria-hidden />
+                            tamper simulation · in memory only
+                          </p>
+                          <p className="mt-1.5 text-[11.5px] leading-relaxed text-red-100/90">
+                            {effectiveTamper.tamperAt === null
+                              ? 'The ledger is empty, so the simulator is armed but could not mutate an entry.'
+                              : `Mutated seq ${effectiveTamper.tamperAt} · ${effectiveTamper.field}. The stored hash no longer matches and the HMAC signature is rejected.`}
+                          </p>
+                          <div className="mt-2 grid gap-x-6 sm:grid-cols-2">
+                            <Metric
+                              label="broken at"
+                              value={effectiveTamper.verification.brokenAt ?? '—'}
+                              danger
+                            />
+                            <Metric
+                              label="invalid hashes"
+                              value={effectiveTamper.verification.invalidHashes}
+                              danger
+                            />
+                            <Metric
+                              label="signature valid"
+                              value={
+                                effectiveTamper.verification.signatureValid
+                                  ? 'yes'
+                                  : 'rejected'
+                              }
+                              danger
+                            />
+                            <Metric
+                              label="tampered root"
+                              value={`${effectiveTamper.tamperedRootHash.slice(0, 18)}…`}
+                              danger
+                            />
+                          </div>
+                          <p className="mt-2 font-mono text-[8.5px] leading-relaxed text-red-300/70">
+                            The live ledger is untouched. Reopen this tab to see a
+                            clean chain again.
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="mt-3 overflow-hidden rounded-xl border border-zinc-800/80" data-guide="receipt-chain">
+                        <div className="flex items-center justify-between border-b border-zinc-800/70 bg-zinc-900/40 px-3 py-2">
+                          <p className="font-mono text-[8.5px] uppercase tracking-[0.14em] text-zinc-500">
+                            hash-chain entries · oldest first
+                          </p>
+                          <span className="font-mono text-[8px] text-zinc-600">
+                            {receipt.verification.checkedHashes} recomputed
+                          </span>
+                        </div>
+                        <ul className="max-h-72 divide-y divide-zinc-800/60 overflow-y-auto">
+                          {receipt.receipt.entries.map((entry) => {
+                            const tampered =
+                              tamperOpen &&
+                              (effectiveTamper?.verification.brokenAt ??
+                                effectiveTamper?.tamperAt) === entry.seq;
+                            return (
+                              <li
+                                key={`${entry.seq}-${entry.hash}`}
+                                className={[
+                                  'px-3 py-2',
+                                  tampered ? 'bg-red-500/[0.08]' : '',
+                                ].join(' ')}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-[8px] text-zinc-600">
+                                    {String(entry.seq).padStart(3, '0')}
+                                  </span>
+                                  <code
+                                    className={[
+                                      'font-mono text-[9px]',
+                                      tampered ? 'text-red-300' : 'text-zinc-300',
+                                    ].join(' ')}
+                                  >
+                                    {entry.kind}
+                                  </code>
+                                  {entry.doubtId && (
+                                    <span className="font-mono text-[8px] text-zinc-600">
+                                      {entry.doubtId}
+                                    </span>
+                                  )}
+                                  {tampered && (
+                                    <span className="ml-auto inline-flex items-center gap-1 font-mono text-[8px] uppercase tracking-wider text-red-300">
+                                      <ShieldX className="size-2.5" aria-hidden />
+                                      broken link
+                                    </span>
+                                  )}
+                                </div>
+                                <p
+                                  className={[
+                                    'mt-0.5 truncate font-mono text-[8px]',
+                                    tampered ? 'text-red-300/80' : 'text-zinc-600',
+                                  ].join(' ')}
+                                >
+                                  {entry.hash}
+                                </p>
+                                <p className="truncate font-mono text-[7.5px] text-zinc-700">
+                                  prev · {entry.prevHash}
+                                </p>
+                              </li>
+                            );
+                          })}
+                          {receipt.receipt.entries.length === 0 && (
+                            <li className="px-3 py-8 text-center font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-600">
+                              genesis only · make a decision to add a link
+                            </li>
+                          )}
+                        </ul>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+
+              {report && !loading && activeTab === 'audit' && (
                 <>
                   {auditError && (
                     <p className="rounded-lg border border-amber-500/25 bg-amber-500/[0.05] px-3 py-2 text-[11px] text-amber-200/80">

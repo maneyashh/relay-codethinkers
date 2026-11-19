@@ -156,17 +156,30 @@ async function main() {
     report.checks.every(
       (item) =>
         typeof item.category === 'string' &&
-        ['row', 'column', 'session', 'synthesis'].includes(item.category),
+        ['row', 'column', 'session', 'synthesis', 'chain', 'integration'].includes(
+          item.category,
+        ),
     ),
     `${report.checks.length} assertions`,
   );
   check(
     'Health endpoint proves the read-only-safe schema ladder',
-    healthJson.schemaVersion === 2 &&
+    healthJson.schemaVersion === 3 &&
       healthJson.resilience?.readOnlySafe === true &&
       healthJson.resilience?.signedSessionRevival === true &&
       typeof healthJson.counts?.signals === 'number' &&
       typeof healthJson.counts?.decisions === 'number',
+  );
+  check(
+    'Health endpoint exposes live ingestion, integrations and receipt tables',
+    typeof healthJson.counts?.ingestions === 'number' &&
+      typeof healthJson.counts?.liveDoubts === 'number' &&
+      typeof healthJson.counts?.integrations === 'number' &&
+      typeof healthJson.counts?.ledgerEntries === 'number' &&
+      healthJson.security?.webhooks ===
+        'GitHub HMAC-SHA256 signature verified server-side' &&
+      healthJson.ingestion?.liveGitHub === true,
+    `${healthJson.counts?.ledgerEntries} ledger links · ${healthJson.counts?.liveDoubts} live doubts`,
   );
 
   // 3. Inspect the raw manager board the browser actually receives.
@@ -597,7 +610,421 @@ async function main() {
     ) && resetAudit.events.some((event) => event.action === 'session.reset'),
   );
 
-  // 14. Every protected endpoint rejects an anonymous browser.
+  // 14. Round 3: live GitHub ingestion, signed webhooks, one-click dispatch
+  // and the SHA-256 receipt chain. This uses a dedicated session so the
+  // assertions above keep their clean baseline.
+  const liveSession = await call('/api/session', {
+    method: 'POST',
+    body: { role: 'junior' },
+  });
+  const liveJson = assertJson(liveSession, 'live ingestion session');
+  let liveCookie = liveSession.cookie;
+  check(
+    'A fresh session opens a genesis receipt chain',
+    liveSession.status === 200 &&
+      liveJson.board.meta.ledger.entries >= 1 &&
+      liveJson.board.meta.ledger.verified === true &&
+      liveJson.board.meta.liveDoubts === 0 &&
+      liveJson.board.meta.ingestion === null,
+    `${liveJson.board.meta.ledger.entries} genesis link`,
+  );
+
+  const ingestResponse = await call('/api/github/ingest', {
+    method: 'POST',
+    body: { presetId: 'hono' },
+    cookie: liveCookie,
+  });
+  const ingest = assertJson(ingestResponse, 'github ingest');
+  const liveDoubts = ingest.board.doubts.filter(
+    (doubt) => doubt.origin === 'github',
+  );
+  check(
+    'Live GitHub ingest returns a real repository snapshot',
+    ingestResponse.status === 200 &&
+      ingest.ingestion.fullName === 'honojs/hono' &&
+      ['live', 'fallback'].includes(ingest.ingestion.mode) &&
+      ingest.ingestion.filesScanned > 0 &&
+      ingest.ingestion.commitsRead > 0 &&
+      ingest.findings.length > 0 &&
+      ingest.ingestion.findings === ingest.findings.length,
+    `${ingest.ingestion.mode} · ${ingest.ingestion.filesScanned} files · ${ingest.findings.length} findings`,
+  );
+  check(
+    'Ingested findings are attached to the signed session as live doubts',
+    ingest.liveDoubts === ingest.findings.length &&
+      liveDoubts.length === ingest.findings.length &&
+      ingest.board.meta.liveDoubts === ingest.findings.length,
+    `${liveDoubts.length} live doubts on the board`,
+  );
+  check(
+    'Every ingested finding carries real SHA and file evidence',
+    liveDoubts.length > 0 &&
+      liveDoubts.every(
+        (doubt) =>
+          doubt.evidence.length > 0 &&
+          doubt.evidence.every(
+            (evidence) =>
+              /^[0-9a-f]{40}$/i.test(evidence.commit ?? '') &&
+              Boolean(evidence.filePath) &&
+              Boolean(evidence.url),
+          ),
+      ),
+    `${liveDoubts.reduce((n, doubt) => n + doubt.evidence.length, 0)} evidence rows`,
+  );
+  check(
+    'The live ingest is written into the receipt chain',
+    ingest.board.meta.ledger.entries > liveJson.board.meta.ledger.entries &&
+      ingest.board.meta.ingestion?.mode === ingest.ingestion.mode,
+    `${ingest.board.meta.ledger.entries} chain links`,
+  );
+
+  const pushResponse = await call('/api/github/webhook', {
+    method: 'POST',
+    body: { event: 'push', presetId: 'hono' },
+    cookie: liveCookie,
+  });
+  const push = assertJson(pushResponse, 'push webhook');
+  check(
+    'A simulated push is HMAC-signed and verified server-side',
+    pushResponse.status === 200 &&
+      push.verified === true &&
+      /^sha256=[0-9a-f]{64}$/.test(push.signature) &&
+      push.doubtsCreated === 1 &&
+      push.liveDoubts === ingest.findings.length + 1,
+    `${push.deliveryId} · ${push.doubtsCreated} finding`,
+  );
+
+  const prResponse = await call('/api/github/webhook', {
+    method: 'POST',
+    body: { event: 'pull_request', presetId: 'hono' },
+    cookie: liveCookie,
+  });
+  const prHook = assertJson(prResponse, 'pull_request webhook');
+  check(
+    'A simulated pull_request is signature-verified and incremental',
+    prResponse.status === 200 &&
+      prHook.verified === true &&
+      prHook.event === 'pull_request' &&
+      prHook.doubtsCreated === 1 &&
+      prHook.liveDoubts === push.liveDoubts + 1,
+    `${prHook.action} · ${prHook.liveDoubts} live findings`,
+  );
+
+  // A second signed session must never inherit another session's live findings.
+  const isolatedSession = await call('/api/session', {
+    method: 'POST',
+    body: { role: 'junior' },
+  });
+  const isolatedBoard = assertJson(
+    await call('/api/triage', { cookie: isolatedSession.cookie }),
+    'isolated session board',
+  );
+  check(
+    'Live findings stay isolated to the active signed session',
+    isolatedSession.status === 200 &&
+      isolatedBoard.board.session.id !== liveJson.board.session.id &&
+      isolatedBoard.board.meta.liveDoubts === 0 &&
+      isolatedBoard.board.meta.ingestion === null &&
+      isolatedBoard.board.doubts.every(
+        (doubt) => doubt.origin !== 'github' && doubt.origin !== 'webhook',
+      ),
+    `second session · ${isolatedBoard.board.meta.liveDoubts} live rows`,
+  );
+
+  const liveJuniorReport = assertJson(
+    await call('/api/security/verify', { cookie: liveCookie }),
+    'live junior report',
+  );
+  check(
+    'Security probe audits the live GitHub boundary without leaks',
+    liveJuniorReport.ok === true &&
+      liveJuniorReport.live.total >= ingest.findings.length &&
+      liveJuniorReport.live.juniorVisible >= ingest.findings.length &&
+      liveJuniorReport.live.technicalKeyLeaks === 0 &&
+      liveJuniorReport.live.managerLeaked === 0 &&
+      liveJuniorReport.live.juniorLeaked === 0 &&
+      liveJuniorReport.checks.find(
+        (item) => item.id === 'live-boundary-isolation',
+      )?.pass === true,
+    `${liveJuniorReport.live.total} live rows · 0 technical leaks`,
+  );
+
+  // Switch the same signed session to the manager lens. The manager must see a
+  // commercially shaped projection, never a path, SHA, URL, diff or target.
+  const managerLiveSwitch = await call('/api/session', {
+    method: 'POST',
+    body: { role: 'manager' },
+    cookie: liveCookie,
+  });
+  const managerLiveJson = assertJson(managerLiveSwitch, 'manager live switch');
+  liveCookie = managerLiveSwitch.cookie ?? liveCookie;
+  const managerLiveBoard = await call('/api/triage', { cookie: liveCookie });
+  const managerLiveRaw = managerLiveBoard.text;
+  const managerLiveDoubts = managerLiveJson.board.doubts.filter(
+    (doubt) => doubt.origin === 'github' || doubt.origin === 'webhook',
+  );
+  check(
+    'Manager live projection contains no technical keys or raw SHAs',
+    managerLiveDoubts.length >= ingest.findings.length &&
+      !managerLiveRaw.includes('"filePath"') &&
+      !managerLiveRaw.includes('"commit"') &&
+      !managerLiveRaw.includes('"diff"') &&
+      !managerLiveRaw.includes('"headSha"') &&
+      !managerLiveRaw.includes('"sourceUrl"') &&
+      !managerLiveRaw.includes('"implementation"') &&
+      !/\b[0-9a-f]{40}\b/i.test(managerLiveRaw),
+    `${managerLiveDoubts.length} live doubts · technical keys absent`,
+  );
+  const managerLiveReport = assertJson(
+    await call('/api/security/verify', { cookie: liveCookie }),
+    'manager live report',
+  );
+  check(
+    'Manager security probe still passes with live findings attached',
+    managerLiveReport.ok === true &&
+      managerLiveReport.live.managerVisible === managerLiveDoubts.length &&
+      managerLiveReport.live.technicalKeyLeaks === 0 &&
+      managerLiveReport.checks.find(
+        (item) => item.id === 'live-manager-no-technical-keys',
+      )?.pass === true,
+  );
+
+  const managerPr = await call('/api/integrations/github-pr', {
+    method: 'POST',
+    body: {},
+    cookie: liveCookie,
+  });
+  const managerPrJson = assertJson(managerPr, 'manager github dispatch');
+  check(
+    'Manager GitHub PR dispatch is rejected with a hard 403',
+    managerPr.status === 403 &&
+      managerPrJson.reason === 'github_pr_dispatch_requires_developer' &&
+      !/diff|artifactSha256|handover\.md/i.test(managerPr.text),
+    `HTTP ${managerPr.status} · no artifact in body`,
+  );
+
+  const managerNotion = await call('/api/integrations/notion-sync', {
+    method: 'POST',
+    body: {},
+    cookie: liveCookie,
+  });
+  const managerNotionJson = assertJson(managerNotion, 'manager notion dispatch');
+  check(
+    'Manager may dispatch Notion, but never receives the artifact',
+    managerNotion.status === 200 &&
+      managerNotionJson.integration.target === 'notion' &&
+      managerNotionJson.artifact === null &&
+      Boolean(managerNotionJson.integration.signature) &&
+      Boolean(managerNotionJson.integration.artifactSha256),
+    `${managerNotionJson.integration.mode} · artifact withheld`,
+  );
+
+  const juniorLiveSwitch = await call('/api/session', {
+    method: 'POST',
+    body: { role: 'junior' },
+    cookie: liveCookie,
+  });
+  const juniorLiveJson = assertJson(juniorLiveSwitch, 'junior live switch');
+  liveCookie = juniorLiveSwitch.cookie ?? liveCookie;
+  const juniorPr = await call('/api/integrations/github-pr', {
+    method: 'POST',
+    body: {},
+    cookie: liveCookie,
+  });
+  const juniorPrJson = assertJson(juniorPr, 'junior github dispatch');
+  check(
+    'Developer GitHub PR dispatch returns a signed server-built bundle',
+    juniorLiveJson.board.session.role === 'junior' &&
+      juniorPr.status === 200 &&
+      juniorPrJson.integration.target === 'github' &&
+      ['live', 'sandbox'].includes(juniorPrJson.integration.mode) &&
+      juniorPrJson.integration.signature.length > 20 &&
+      juniorPrJson.integration.artifactSha256.length === 64 &&
+      Boolean(juniorPrJson.artifact?.markdown.includes('Relay handover')) &&
+      juniorPrJson.ledger.entries > 0,
+    `${juniorPrJson.integration.mode} · ${juniorPrJson.integration.reference}`,
+  );
+
+  const juniorNotion = await call('/api/integrations/notion-sync', {
+    method: 'POST',
+    body: {},
+    cookie: liveCookie,
+  });
+  const juniorNotionJson = assertJson(
+    juniorNotion,
+    'junior notion dispatch',
+  );
+  check(
+    'Developer Notion dispatch persists a second signed integration',
+    juniorNotion.status === 200 &&
+      juniorNotionJson.integration.target === 'notion' &&
+      ['live', 'sandbox'].includes(juniorNotionJson.integration.mode) &&
+      juniorNotionJson.artifact !== null &&
+      juniorNotionJson.integration.signature.length > 20,
+    `${juniorNotionJson.integration.reference} · artifact ${juniorNotionJson.artifact ? 'delivered' : 'missing'}`,
+  );
+
+  const integrationsList = assertJson(
+    await call('/api/integrations', { cookie: liveCookie }),
+    'integration list',
+  );
+  check(
+    'Integration list is session-scoped and counts every dispatch',
+    integrationsList.role === 'junior' &&
+      integrationsList.counts.github >= 1 &&
+      integrationsList.counts.notion >= 2 &&
+      integrationsList.integrations.every(
+        (item) =>
+          item.signature.length > 20 &&
+          item.artifactSha256.length === 64 &&
+          item.status === 'dispatched',
+      ) &&
+      integrationsList.capabilities.githubDispatchRole === 'junior' &&
+      integrationsList.capabilities.managerGithubForbidden === true,
+    `${integrationsList.counts.total} dispatches · ${integrationsList.counts.sandbox} sandbox`,
+  );
+
+  const receiptResponse = await call('/api/security/receipt', {
+    cookie: liveCookie,
+  });
+  const receiptJson = assertJson(receiptResponse, 'receipt export');
+  const receipt = receiptJson.receipt;
+  check(
+    'Receipt export is a SHA-256 hash chain signed with HMAC',
+    receiptResponse.status === 200 &&
+      receipt.artifact === 'relay-handover-receipt' &&
+      receipt.algorithm === 'SHA-256' &&
+      receipt.signatureAlgorithm === 'HMAC-SHA256' &&
+      receipt.entryCount >= 6 &&
+      receipt.chainFormula.includes('sha256(prevHash') &&
+      receiptJson.verification.ok === true &&
+      receiptJson.verification.signatureValid === true &&
+      receiptJson.verification.invalidHashes === 0,
+    `${receipt.entryCount} links · root ${receipt.rootHash.slice(0, 14)}…`,
+  );
+  check(
+    'Receipt link order is contiguous and genesis-anchored',
+    receipt.entries.every(
+      (entry, index) =>
+        entry.seq === index + 1 &&
+        (index === 0
+          ? entry.prevHash === receipt.genesisHash
+          : entry.prevHash === receipt.entries[index - 1].hash) &&
+        /^[0-9a-f]{64}$/.test(entry.hash),
+    ) &&
+      receipt.rootHash === receipt.entries[receipt.entries.length - 1].hash,
+  );
+  check(
+    'Tamper simulation breaks the copied chain but not the live ledger',
+    receiptJson.tamper?.tamperAt !== null &&
+      receiptJson.tamper?.verification.ok === false &&
+      receiptJson.tamper?.verification.invalidHashes >= 1 &&
+      receiptJson.tamper?.verification.signatureValid === false &&
+      receiptJson.ledger.verified === true,
+    `broken at seq ${receiptJson.tamper?.tamperAt}`,
+  );
+
+  const exportedVerify = assertJson(
+    await call('/api/security/receipt', {
+      method: 'POST',
+      body: { receipt },
+      cookie: liveCookie,
+    }),
+    'exported receipt verifier',
+  );
+  check(
+    'The exported .relay.sig verifies over the wire',
+    exportedVerify.ok === true &&
+      exportedVerify.verification.signatureValid === true &&
+      exportedVerify.verification.checkedHashes === receipt.entryCount,
+  );
+
+  const postTamper = assertJson(
+    await call('/api/security/receipt', {
+      method: 'POST',
+      body: { receipt, tamper: true },
+      cookie: liveCookie,
+    }),
+    'posted tamper simulation',
+  );
+  check(
+    'POST tamper=true reports the broken SHA-256 link',
+    postTamper.verification?.ok === true &&
+      postTamper.tamper?.verification.ok === false &&
+      postTamper.tamper?.verification.brokenAt !== null &&
+      postTamper.tamper?.verification.invalidHashes >= 1 &&
+      postTamper.tamper?.verification.signatureValid === false,
+    `broken at seq ${postTamper.tamper?.verification.brokenAt}`,
+  );
+
+  const forgedReceipt = structuredClone(receipt);
+  forgedReceipt.entries[0].payload.injectedAfterSignoff = true;
+  const forgedReceiptResponse = assertJson(
+    await call('/api/security/receipt', {
+      method: 'POST',
+      body: { receipt: forgedReceipt },
+      cookie: liveCookie,
+    }),
+    'forged receipt verifier',
+  );
+  check(
+    'A mutated exported receipt is rejected by the verifier',
+    forgedReceiptResponse.ok === false &&
+      forgedReceiptResponse.verification.ok === false &&
+      forgedReceiptResponse.verification.brokenAt === 1 &&
+      forgedReceiptResponse.verification.signatureValid === false,
+    `${forgedReceiptResponse.verification.invalidHashes} invalid hashes`,
+  );
+
+  const cleanReceipt = assertJson(
+    await call('/api/security/receipt', { cookie: liveCookie }),
+    'clean receipt',
+  );
+  check(
+    'The live chain is unchanged after tamper simulations',
+    cleanReceipt.verification.ok === true &&
+      cleanReceipt.receipt.rootHash === receipt.rootHash,
+  );
+
+  const liveAudit = assertJson(
+    await call('/api/security/audit', { cookie: liveCookie }),
+    'live audit',
+  );
+  check(
+    'Ingest, webhook and dispatch are audited without leaking content',
+    liveAudit.events.some((event) => event.action === 'github.ingest') &&
+      liveAudit.events.some((event) => event.action === 'github.webhook') &&
+      liveAudit.events.filter((event) => event.action === 'integration.dispatch')
+        .length >= 3 &&
+      !liveAudit.events.some((event) =>
+        /honojs\/hono\/blob|[0-9a-f]{40}/i.test(event.detail ?? ''),
+      ),
+    `${liveAudit.counts.total} audit events`,
+  );
+
+  const liveReportAfter = assertJson(
+    await call('/api/security/verify', { cookie: liveCookie }),
+    'live report after dispatch',
+  );
+  check(
+    'Security probe verifies the receipt chain and dispatch signatures',
+    liveReportAfter.chain.entries === cleanReceipt.receipt.entryCount &&
+      liveReportAfter.chain.verified === true &&
+      liveReportAfter.chain.tamperDetected === true &&
+      liveReportAfter.integrations.total >= 3 &&
+      liveReportAfter.integrations.managerGithubStatus === 403 &&
+      liveReportAfter.integrations.sandboxSigned === true &&
+      liveReportAfter.integrations.artifactBoundaryPass === true &&
+      liveReportAfter.checks.find(
+        (item) => item.id === 'ledger-chain-verified',
+      )?.pass === true &&
+      liveReportAfter.checks.find(
+        (item) => item.id === 'integration-sandbox-signed',
+      )?.pass === true,
+    `${liveReportAfter.chain.entries} chain links · ${liveReportAfter.integrations.total} dispatches`,
+  );
+
+  // 15. Every protected endpoint rejects an anonymous browser.
   const protectedRoutes = [
     ['GET', '/api/triage'],
     ['GET', '/api/security/verify'],
@@ -606,6 +1033,12 @@ async function main() {
     ['POST', '/api/signals'],
     ['POST', '/api/triage/fast-forward'],
     ['POST', '/api/triage/reset'],
+    ['POST', '/api/github/ingest'],
+    ['POST', '/api/github/webhook'],
+    ['GET', '/api/integrations'],
+    ['POST', '/api/integrations/github-pr'],
+    ['POST', '/api/integrations/notion-sync'],
+    ['GET', '/api/security/receipt'],
   ];
   const anonymous = await Promise.all(
     protectedRoutes.map(([method, path]) =>

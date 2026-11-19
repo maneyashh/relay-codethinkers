@@ -10,12 +10,22 @@ interface ConsoleState {
   securityOpen: boolean;
   helpOpen: boolean;
   day1Open: boolean;
+  ingestOpen: boolean;
+  securityTab:
+    | 'boundary'
+    | 'payload'
+    | 'signals'
+    | 'receipt'
+    | 'audit'
+    | null;
 
   setChaosOpen: (open: boolean) => void;
   setAskOpen: (open: boolean) => void;
   setSecurityOpen: (open: boolean) => void;
   setHelpOpen: (open: boolean) => void;
   setDay1Open: (open: boolean) => void;
+  setIngestOpen: (open: boolean) => void;
+  openSecurityTab: (tab: NonNullable<ConsoleState['securityTab']>) => void;
   closeAll: () => void;
 
   /** Jump to a specific evidence node from a citation, anywhere in the app. */
@@ -28,12 +38,17 @@ export const useConsole = create<ConsoleState>((set) => ({
   securityOpen: false,
   helpOpen: false,
   day1Open: false,
+  ingestOpen: false,
+  securityTab: null,
 
   setChaosOpen: (chaosOpen) => set({ chaosOpen }),
   setAskOpen: (askOpen) => set({ askOpen }),
   setSecurityOpen: (securityOpen) => set({ securityOpen }),
   setHelpOpen: (helpOpen) => set({ helpOpen }),
   setDay1Open: (day1Open) => set({ day1Open }),
+  setIngestOpen: (ingestOpen) => set({ ingestOpen }),
+  openSecurityTab: (securityTab) =>
+    set({ securityTab, securityOpen: true }),
   closeAll: () =>
     set({
       chaosOpen: false,
@@ -41,6 +56,8 @@ export const useConsole = create<ConsoleState>((set) => ({
       securityOpen: false,
       helpOpen: false,
       day1Open: false,
+      ingestOpen: false,
+      securityTab: null,
     }),
 
   reveal: (doubtId, evidenceId) => {

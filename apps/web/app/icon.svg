@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">
+  <defs>
+    <linearGradient id="tile" x1="4" y1="2" x2="40" y2="44" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff" />
+      <stop offset=".44" stop-color="#f4f4f6" />
+      <stop offset="1" stop-color="#c8c8d1" />
+    </linearGradient>
+  </defs>
+  <rect width="44" height="44" rx="13" fill="url(#tile)" />
+  <text
+    x="22"
+    y="22"
+    text-anchor="middle"
+    dominant-baseline="central"
+    font-family="Georgia, 'Times New Roman', Times, serif"
+    font-size="27"
+    font-weight="600"
+    fill="#0a0a0c"
+  >R</text>
+</svg>

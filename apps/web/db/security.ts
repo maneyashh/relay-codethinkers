@@ -1,10 +1,16 @@
 import type {
   AuditResponse,
+  IntegrationTarget,
   SecurityCheck,
   SecurityProjection,
   SecurityReport,
   SignalBoundary,
 } from '@/lib/api-types';
+import { simulateTamper, verifySessionLedger } from '@/lib/crypto-ledger';
+import {
+  githubDispatchStatus,
+  verifyDispatchSignature,
+} from '@/lib/integrations';
 import type { Role } from '@/lib/triage-types';
 import {
   buildBoardForRole,
@@ -16,6 +22,17 @@ import {
   verifySessionToken,
   type SessionRecord,
 } from './session';
+
+const LIVE_TECHNICAL_KEYS = [
+  'filePath',
+  'commit',
+  'diff',
+  'headSha',
+  'sourceUrl',
+  'implementation',
+] as const;
+
+const LIVE_SHA = /\b[0-9a-f]{40}\b/gi;
 
 const RESTRICTED_VALUE = 'relay-staging-2024!';
 const FORGED_TOKEN = '00000000-0000-4000-8000-000000000000.not-a-valid-signature';
@@ -123,6 +140,129 @@ function signalBoundary(session: SessionRecord): SignalBoundary {
 }
 
 /**
+ * Live GitHub findings are stored as role-specific JSON payloads. The manager
+ * payload must never carry a path, commit, diff, raw SHA, source URL or
+ * implementation object, even though the row itself knows all of them.
+ */
+function liveBoundary(session: SessionRecord): {
+  total: number;
+  managerVisible: number;
+  juniorVisible: number;
+  managerLeaked: number;
+  juniorLeaked: number;
+  technicalKeyLeaks: number;
+} {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT head_sha, manager_payload, junior_payload
+       FROM session_live_doubts WHERE session_id = ?`,
+    )
+    .all(session.id) as {
+    head_sha: string | null;
+    manager_payload: string;
+    junior_payload: string;
+  }[];
+
+  const managerDoubts = buildBoardForSessionRole(
+    session,
+    'manager',
+  ).doubts.filter((doubt) => doubt.origin !== 'seed');
+  const juniorDoubts = buildBoardForSessionRole(
+    session,
+    'junior',
+  ).doubts.filter((doubt) => doubt.origin !== 'seed');
+
+  let managerLeaked = 0;
+  let juniorLeaked = 0;
+  let technicalKeyLeaks = 0;
+
+  for (const row of rows) {
+    const managerJson = row.manager_payload;
+    const managerKeys = LIVE_TECHNICAL_KEYS.reduce(
+      (sum, key) => sum + countKey(JSON.parse(managerJson), key),
+      0,
+    );
+    const managerShas = row.head_sha
+      ? (managerJson.match(LIVE_SHA) ?? []).length
+      : 0;
+    technicalKeyLeaks += managerKeys + managerShas;
+    if (managerKeys > 0 || managerShas > 0) managerLeaked += 1;
+
+    // The developer payload must not inherit the commercial impact block.
+    try {
+      if (countKey(JSON.parse(row.junior_payload), 'impact') > 0) {
+        juniorLeaked += 1;
+      }
+    } catch {
+      juniorLeaked += 1;
+    }
+  }
+
+  return {
+    total: rows.length,
+    managerVisible: managerDoubts.length,
+    juniorVisible: juniorDoubts.length,
+    managerLeaked,
+    juniorLeaked,
+    technicalKeyLeaks,
+  };
+}
+
+function integrationBoundary(session: SessionRecord): {
+  total: number;
+  github: number;
+  notion: number;
+  live: number;
+  sandbox: number;
+  managerGithubStatus: number;
+  sandboxSigned: boolean;
+  artifactBoundaryPass: boolean;
+} {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT id, target, mode, reference, signature, artifact_sha256, created_at
+       FROM session_integrations WHERE session_id = ?`,
+    )
+    .all(session.id) as {
+    id: string;
+    target: IntegrationTarget;
+    mode: 'live' | 'sandbox';
+    reference: string;
+    signature: string;
+    artifact_sha256: string;
+    created_at: string;
+  }[];
+
+  const managerView = db
+    .prepare(
+      'SELECT * FROM v_integration_manager WHERE session_id = ?',
+    )
+    .all(session.id) as Record<string, unknown>[];
+
+  return {
+    total: rows.length,
+    github: rows.filter((row) => row.target === 'github').length,
+    notion: rows.filter((row) => row.target === 'notion').length,
+    live: rows.filter((row) => row.mode === 'live').length,
+    sandbox: rows.filter((row) => row.mode === 'sandbox').length,
+    managerGithubStatus: githubDispatchStatus('manager'),
+    sandboxSigned: rows.every((row) =>
+      verifyDispatchSignature({
+        sessionId: session.id,
+        target: row.target,
+        reference: row.reference,
+        artifactSha256: row.artifact_sha256,
+        createdAt: row.created_at,
+        signature: row.signature,
+      }),
+    ),
+    artifactBoundaryPass: !JSON.stringify(managerView).includes('"artifact"'),
+  };
+}
+
+/**
  * Compare the two server-side projections and return *counts only*. No quote,
  * source, path, commit or secret ever leaves the server through this report.
  */
@@ -134,10 +274,25 @@ export function buildSecurityReport(
   const junior = projectionFor('junior');
   const forgedCookieRejected = verifySessionToken(FORGED_TOKEN) === null;
   const signals = signalBoundary(session);
+  const live = liveBoundary(session);
+  const integrations = integrationBoundary(session);
+  const { receipt, verification } = verifySessionLedger(session.id);
+  const tamper = simulateTamper(receipt);
   const db = getDb();
   const evidenceRows = db
     .prepare('SELECT COUNT(*) AS n FROM evidence')
     .get() as { n: number | bigint } | undefined;
+
+  const chain: SecurityReport['chain'] = {
+    entries: receipt.entryCount,
+    rootHash: receipt.rootHash,
+    signature: receipt.signature,
+    verified: verification.ok,
+    invalidHashes: verification.invalidHashes,
+    brokenAt: verification.brokenAt,
+    signatureValid: verification.signatureValid,
+    tamperDetected: tamper.tamperAt === null || !tamper.verification.ok,
+  };
 
   const checks: SecurityCheck[] = [
     {
@@ -213,6 +368,69 @@ export function buildSecurityReport(
           : `${signals.total} live signals · ${signals.managerLeaked + signals.juniorLeaked} cross-lens leaks`,
       category: 'synthesis',
     },
+    {
+      id: 'live-boundary-isolation',
+      label: 'Live GitHub findings obey the signed-role boundary',
+      pass:
+        live.managerLeaked === 0 &&
+        live.juniorLeaked === 0 &&
+        live.technicalKeyLeaks === 0,
+      detail:
+        live.total === 0
+          ? 'no live ingest in this session · isolation armed'
+          : `${live.total} live findings · ${live.technicalKeyLeaks} technical leaks · ${live.managerLeaked + live.juniorLeaked} cross-lens leaks`,
+      category: 'row',
+    },
+    {
+      id: 'live-manager-no-technical-keys',
+      label: 'Manager live payload has no paths, SHAs, diffs or targets',
+      pass: live.technicalKeyLeaks === 0,
+      detail: `${live.technicalKeyLeaks} technical keys or raw SHAs in manager live payloads`,
+      category: 'column',
+    },
+    {
+      id: 'ledger-chain-verified',
+      label: 'Session receipt hash chain recomputes link-by-link',
+      pass: verification.ok,
+      detail: `${receipt.entryCount} SHA-256 links · root ${receipt.rootHash.slice(0, 16)}… · signature ${verification.signatureValid ? 'valid' : 'invalid'}`,
+      category: 'chain',
+    },
+    {
+      id: 'ledger-tamper-detected',
+      label: 'A mutated receipt entry breaks the chain and signature',
+      pass: tamper.tamperAt === null || !tamper.verification.ok,
+      detail:
+        tamper.tamperAt === null
+          ? 'no entries to mutate · chain armed'
+          : `tamper at seq ${tamper.tamperAt} · ${tamper.verification.invalidHashes} invalid hash${tamper.verification.invalidHashes === 1 ? '' : 'es'} · signature ${tamper.verification.signatureValid ? 'valid' : 'rejected'}`,
+      category: 'chain',
+    },
+    {
+      id: 'integration-manager-github-forbidden',
+      label: 'Manager role receives 403 for GitHub PR dispatch',
+      pass: integrations.managerGithubStatus === 403,
+      detail: `role gate returned ${integrations.managerGithubStatus}`,
+      category: 'integration',
+    },
+    {
+      id: 'integration-sandbox-signed',
+      label: 'Every dispatch carries a verifiable HMAC signature',
+      pass: integrations.sandboxSigned,
+      detail:
+        integrations.total === 0
+          ? 'no dispatches yet · verifier armed'
+          : `${integrations.total} dispatches · ${integrations.sandbox} sandbox · ${integrations.live} live`,
+      category: 'integration',
+    },
+    {
+      id: 'integration-artifact-manager-boundary',
+      label: 'Manager integration view never projects the artifact',
+      pass: integrations.artifactBoundaryPass,
+      detail: integrations.artifactBoundaryPass
+        ? 'artifact column absent from v_integration_manager'
+        : 'artifact column leaked into the manager view',
+      category: 'integration',
+    },
   ];
 
   const withheldForRole =
@@ -236,6 +454,9 @@ export function buildSecurityReport(
     junior: junior.projection,
     checks,
     signals,
+    live,
+    chain,
+    integrations,
     receipt: {
       sqlView:
         session.role === 'manager'
@@ -243,6 +464,12 @@ export function buildSecurityReport(
           : 'v_evidence_junior',
       signalView:
         session.role === 'manager' ? 'v_signal_manager' : 'v_signal_junior',
+      liveView:
+        session.role === 'manager' ? 'v_live_manager' : 'v_live_junior',
+      integrationView:
+        session.role === 'manager'
+          ? 'v_integration_manager'
+          : 'v_integration_junior',
       hmac: 'HMAC-SHA256',
       cacheControl: 'no-store',
       storage: getStorageMode(),

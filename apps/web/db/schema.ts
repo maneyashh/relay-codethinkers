@@ -4,22 +4,26 @@
  * The security model lives here as well as in the API:
  *   - `v_evidence_manager` is a row + column security view. It excludes every
  *     `audience = 'junior'` row and never projects `file_path`, `commit_ref`,
- *     `redacted` or `url`.
+ *     `diff`, `redacted` or `url`.
  *   - `v_evidence_junior` excludes `audience = 'manager'` rows.
  *   - `v_signal_manager` / `v_signal_junior` apply the same row + column policy
  *     to judge-injected live signals.
+ *   - `v_live_manager` never selects repo, ref, SHA, source URL or the
+ *     developer JSON payload. `v_live_junior` is the engineering projection.
+ *   - `v_integration_manager` never selects the dispatched artifact.
  *
  * The API chooses a view from the *signed session role*, never from a query
  * string or request body. That is what makes the role toggle a permission
  * boundary instead of a CSS filter.
  *
  * `CREATE ... IF NOT EXISTS` keeps cold starts cheap and avoids concurrent
- * DDL churn on serverless filesystems. Set `PRAGMA user_version` when a
- * breaking schema change needs an explicit migration.
+ * DDL churn on serverless filesystems. `PRAGMA user_version` tracks breaking
+ * schema changes; `db/client.ts` performs additive migrations before the views
+ * are recreated.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
-export const SCHEMA_SQL = `
+export const BASE_SCHEMA_SQL = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
@@ -83,6 +87,7 @@ CREATE TABLE IF NOT EXISTS evidence (
   channel      TEXT,
   file_path    TEXT,
   commit_ref   TEXT,
+  diff         TEXT,
   url          TEXT,
   UNIQUE (doubt_id, position)
 );
@@ -139,7 +144,96 @@ CREATE TABLE IF NOT EXISTS session_signals (
   channel     TEXT,
   file_path   TEXT,
   commit_ref  TEXT,
+  diff        TEXT,
   created_at  TEXT NOT NULL
+);
+
+-- Round 3 · live GitHub ingestion. One active ingestion per session; a new
+-- ingest replaces the previous live doubts for that browser only.
+CREATE TABLE IF NOT EXISTS session_ingestions (
+  id               TEXT PRIMARY KEY,
+  session_id       TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  repo             TEXT NOT NULL,
+  full_name        TEXT NOT NULL,
+  ref              TEXT NOT NULL,
+  head_sha         TEXT,
+  mode             TEXT NOT NULL CHECK (mode IN ('live', 'fallback')),
+  source           TEXT NOT NULL CHECK (source IN ('preset', 'custom')),
+  files_scanned    INTEGER NOT NULL DEFAULT 0,
+  commits_read     INTEGER NOT NULL DEFAULT 0,
+  findings         INTEGER NOT NULL DEFAULT 0,
+  fallback_reason  TEXT,
+  created_at       TEXT NOT NULL
+);
+
+-- GitHub findings become session-scoped doubts. The role payloads are stored
+-- as JSON so the manager projection never has a column that could carry a
+-- diff, commit SHA, URL or implementation object.
+CREATE TABLE IF NOT EXISTS session_live_doubts (
+  id                 TEXT PRIMARY KEY,
+  session_id         TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  project_id         TEXT NOT NULL,
+  position           INTEGER NOT NULL,
+  origin             TEXT NOT NULL CHECK (origin IN ('github', 'webhook')),
+  repo               TEXT NOT NULL,
+  ref                TEXT,
+  head_sha           TEXT,
+  source_url         TEXT,
+  kind               TEXT NOT NULL CHECK (kind IN ('hard_contradiction', 'missing_info')),
+  severity           TEXT NOT NULL CHECK (severity IN ('critical', 'high', 'medium')),
+  area               TEXT NOT NULL,
+  title              TEXT NOT NULL,
+  claim              TEXT NOT NULL,
+  confidence         REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  engine_hint_manager TEXT NOT NULL,
+  engine_hint_junior  TEXT NOT NULL,
+  manager_payload    TEXT NOT NULL,
+  junior_payload     TEXT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'skipped')),
+  resolved_with      INTEGER CHECK (resolved_with IN (1, 2, 3)),
+  decision_json      TEXT,
+  created_at         TEXT NOT NULL,
+  UNIQUE (session_id, position)
+);
+
+-- Round 3 · one-click dispatches. The artifact column is deliberately excluded
+-- from the manager SQL view, even for a Notion page the manager themself triggered.
+CREATE TABLE IF NOT EXISTS session_integrations (
+  id               TEXT PRIMARY KEY,
+  session_id       TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  target           TEXT NOT NULL CHECK (target IN ('github', 'notion')),
+  mode             TEXT NOT NULL CHECK (mode IN ('live', 'sandbox')),
+  status           TEXT NOT NULL CHECK (status IN ('dispatched', 'failed')),
+  reference        TEXT NOT NULL,
+  url              TEXT,
+  signature        TEXT NOT NULL,
+  artifact_sha256  TEXT NOT NULL,
+  artifact         TEXT NOT NULL,
+  payload_json     TEXT NOT NULL,
+  created_at       TEXT NOT NULL
+);
+
+-- Round 3 · append-only SHA-256 hash chain. Every human decision, verification,
+-- ingestion, webhook and dispatch adds one entry. The chain is per session.
+CREATE TABLE IF NOT EXISTS ledger_entries (
+  session_id    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  seq           INTEGER NOT NULL,
+  id            TEXT NOT NULL PRIMARY KEY,
+  kind          TEXT NOT NULL,
+  doubt_id      TEXT,
+  payload_json  TEXT NOT NULL,
+  prev_hash     TEXT NOT NULL,
+  hash          TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  UNIQUE (session_id, seq)
+);
+
+CREATE TABLE IF NOT EXISTS session_receipts (
+  session_id    TEXT NOT NULL PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  entry_count   INTEGER NOT NULL,
+  root_hash     TEXT NOT NULL,
+  signature     TEXT NOT NULL,
+  created_at    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -152,37 +246,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at  TEXT NOT NULL
 );
 
--- ---------------------------------------------------------------------------
--- Role-scoped security views (the database half of the permission boundary)
--- ---------------------------------------------------------------------------
-CREATE VIEW IF NOT EXISTS v_evidence_manager AS
-SELECT
-  id, doubt_id, position, source, author, authored_at, quote,
-  audience, polarity, relevance, channel
-FROM evidence
-WHERE audience IN ('all', 'manager');
-
-CREATE VIEW IF NOT EXISTS v_evidence_junior AS
-SELECT
-  id, doubt_id, position, source, author, authored_at, quote, redacted,
-  audience, polarity, relevance, channel, file_path, commit_ref, url
-FROM evidence
-WHERE audience IN ('all', 'junior');
-
-CREATE VIEW IF NOT EXISTS v_signal_manager AS
-SELECT
-  id, session_id, doubt_id, source, author, quote, audience, polarity,
-  relevance, channel, created_at
-FROM session_signals
-WHERE audience IN ('all', 'manager');
-
-CREATE VIEW IF NOT EXISTS v_signal_junior AS
-SELECT
-  id, session_id, doubt_id, source, author, quote, audience, polarity,
-  relevance, channel, file_path, commit_ref, created_at
-FROM session_signals
-WHERE audience IN ('all', 'junior');
-
 CREATE INDEX IF NOT EXISTS idx_evidence_doubt ON evidence(doubt_id, position);
 CREATE INDEX IF NOT EXISTS idx_evidence_audience ON evidence(audience);
 CREATE INDEX IF NOT EXISTS idx_resolutions_doubt ON resolutions(doubt_id);
@@ -190,6 +253,76 @@ CREATE INDEX IF NOT EXISTS idx_session_doubts_session ON session_doubts(session_
 CREATE INDEX IF NOT EXISTS idx_session_decisions_session ON session_decisions(session_id);
 CREATE INDEX IF NOT EXISTS idx_session_signals_session ON session_signals(session_id, doubt_id);
 CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id, created_at);
-
-PRAGMA user_version = ${SCHEMA_VERSION};
+CREATE INDEX IF NOT EXISTS idx_ingestions_session ON session_ingestions(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_live_session ON session_live_doubts(session_id, position);
+CREATE INDEX IF NOT EXISTS idx_integrations_session ON session_integrations(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ledger_session ON ledger_entries(session_id, seq);
 `;
+
+export const VIEWS_SQL = `
+DROP VIEW IF EXISTS v_evidence_manager;
+DROP VIEW IF EXISTS v_evidence_junior;
+DROP VIEW IF EXISTS v_signal_manager;
+DROP VIEW IF EXISTS v_signal_junior;
+DROP VIEW IF EXISTS v_live_manager;
+DROP VIEW IF EXISTS v_live_junior;
+DROP VIEW IF EXISTS v_integration_manager;
+DROP VIEW IF EXISTS v_integration_junior;
+
+CREATE VIEW v_evidence_manager AS
+SELECT
+  id, doubt_id, position, source, author, authored_at, quote,
+  audience, polarity, relevance, channel
+FROM evidence
+WHERE audience IN ('all', 'manager');
+
+CREATE VIEW v_evidence_junior AS
+SELECT
+  id, doubt_id, position, source, author, authored_at, quote, redacted,
+  audience, polarity, relevance, channel, file_path, commit_ref, diff, url
+FROM evidence
+WHERE audience IN ('all', 'junior');
+
+CREATE VIEW v_signal_manager AS
+SELECT
+  id, session_id, doubt_id, source, author, quote, audience, polarity,
+  relevance, channel, created_at
+FROM session_signals
+WHERE audience IN ('all', 'manager');
+
+CREATE VIEW v_signal_junior AS
+SELECT
+  id, session_id, doubt_id, source, author, quote, audience, polarity,
+  relevance, channel, file_path, commit_ref, diff, created_at
+FROM session_signals
+WHERE audience IN ('all', 'junior');
+
+CREATE VIEW v_live_manager AS
+SELECT
+  id, session_id, project_id, position, origin, kind, severity, area,
+  title, claim, confidence, engine_hint_manager AS engine_hint,
+  manager_payload AS payload, status, resolved_with, decision_json, created_at
+FROM session_live_doubts;
+
+CREATE VIEW v_live_junior AS
+SELECT
+  id, session_id, project_id, position, origin, kind, severity, area,
+  title, claim, confidence, engine_hint_junior AS engine_hint,
+  junior_payload AS payload, status, resolved_with, decision_json,
+  repo, ref, head_sha, source_url, created_at
+FROM session_live_doubts;
+
+CREATE VIEW v_integration_manager AS
+SELECT
+  id, session_id, target, mode, status, reference, url, signature,
+  artifact_sha256, created_at
+FROM session_integrations;
+
+CREATE VIEW v_integration_junior AS
+SELECT
+  id, session_id, target, mode, status, reference, url, signature,
+  artifact_sha256, artifact, payload_json, created_at
+FROM session_integrations;
+`;
+
+export const SCHEMA_SQL = `${BASE_SCHEMA_SQL}\n${VIEWS_SQL}`;

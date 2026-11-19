@@ -12,6 +12,12 @@ export type Role = 'manager' | 'junior';
 export type EvidencePolarity = 'supports' | 'contradicts' | 'context';
 export type AppView = 'landing' | 'ingesting' | 'triage' | 'complete';
 
+/** Where a doubt came from. Seed = the T-5 narrative dataset. */
+export type DoubtOrigin = 'seed' | 'github' | 'webhook';
+
+/** Progressive disclosure: one contradiction at a time, or the whole board. */
+export type FocusMode = 'guided' | 'war';
+
 /**
  * How a human closed a doubt. `standard` is the keyboard 1/2/3 path;
  * `auto` is the explicitly-labelled judge accelerator.
@@ -48,6 +54,8 @@ export interface Evidence {
   /** Technical targets, only shown in the developer lens. */
   filePath?: string;
   commit?: string;
+  /** Unified diff derived from the real file/commit. Developer lens only. */
+  diff?: string;
   channel?: string;
   /** True when a judge injected this signal during the live demo. */
   injected?: boolean;
@@ -124,6 +132,12 @@ export interface Doubt {
   decision?: DoubtDecision;
   /** Deterministic confidence synthesis, including live injected signals. */
   synthesis?: DoubtSynthesis;
+  /** Where the doubt came from: the seeded narrative, a GitHub ingest or a webhook. */
+  origin?: DoubtOrigin;
+  /** Live GitHub provenance. Omitted entirely from the manager projection. */
+  repo?: string;
+  headSha?: string;
+  sourceUrl?: string;
 }
 
 export interface Reward {

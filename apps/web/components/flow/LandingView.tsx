@@ -2,22 +2,25 @@
 
 import {
   ArrowRight,
-  Braces,
+  BadgeCheck,
   Check,
   ClipboardList,
   FileText,
   GitBranch,
-  Lock,
+  HelpCircle,
   MessageSquare,
   ScanLine,
   ShieldCheck,
   Sparkles,
-  Terminal,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 
-import { useTriage } from '@/stores/triage';
+import { RelayLogo, RelayMark } from '@/components/brand/RelayLogo';
+import { GitHubIngestStudio } from '@/components/triage/GitHubIngestStudio';
+import { JudgeWalkthroughTrigger } from '@/components/triage/JudgeWalkthrough';
+import { Shortcuts } from '@/components/triage/Shortcuts';
+import { useConsole } from '@/stores/console';
 
 const SOURCES: {
   label: string;
@@ -99,15 +102,16 @@ function OrbitVisual() {
 
       {/* center core */}
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-        <div className="relative grid size-24 place-items-center rounded-full border border-zinc-700 bg-zinc-950 shadow-[0_0_100px_rgba(16,185,129,0.22)] sm:size-28">
+        <div className="relative grid place-items-center">
           <span
-            className="blast-ring-pulse absolute -inset-3 rounded-full border border-emerald-500/20"
+            className="blast-ring-pulse absolute -inset-6 rounded-full border border-emerald-500/20"
             aria-hidden
           />
-          <span className="absolute inset-2 rounded-full border border-zinc-800" />
-          <span className="font-mono text-3xl font-bold tracking-tighter text-zinc-100">
-            R
-          </span>
+          <span
+            className="absolute -inset-10 rounded-full bg-emerald-500/[0.12] blur-2xl"
+            aria-hidden
+          />
+          <RelayMark size={88} className="relative" />
         </div>
         <p className="mt-4 text-center font-mono text-[8px] uppercase tracking-[0.24em] text-zinc-500">
           relay engine
@@ -160,7 +164,17 @@ function OrbitVisual() {
 }
 
 export function LandingView() {
-  const startIngest = useTriage((s) => s.startIngest);
+  const setHelpOpen = useConsole((s) => s.setHelpOpen);
+  const setIngestOpen = useConsole((s) => s.setIngestOpen);
+
+  /**
+   * One action, one intent: open the repository picker. The judge chooses any
+   * public repository (or the starred hackathon repo); only then does Relay
+   * start the live scan, so nothing is scanned without an explicit choice.
+   */
+  const openRepoPicker = useCallback(() => {
+    setIngestOpen(true);
+  }, [setIngestOpen]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -176,44 +190,21 @@ export function LandingView() {
         return;
       }
       event.preventDefault();
-      startIngest();
+      openRepoPicker();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [startIngest]);
+  }, [openRepoPicker]);
 
   return (
-    <div className="relative flex min-h-dvh flex-col overflow-hidden bg-zinc-950 text-zinc-100 antialiased selection:bg-zinc-700/60">
+    <div className="relative flex min-h-dvh flex-col overflow-hidden bg-[#07080C] text-zinc-100 antialiased selection:bg-zinc-700/60">
       {/* ambient background */}
       <div className="relay-grid pointer-events-none absolute inset-0 opacity-70" />
       <div className="pointer-events-none absolute -top-48 left-1/2 size-[720px] -translate-x-1/2 rounded-full bg-emerald-500/[0.09] blur-[130px]" />
       <div className="pointer-events-none absolute -bottom-56 -right-24 size-[520px] rounded-full bg-indigo-500/[0.08] blur-[130px]" />
 
-      <header className="relative z-20 mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-6 sm:px-8">
-        <div className="flex items-center gap-3">
-          <div className="grid size-9 place-items-center rounded-xl bg-zinc-100 font-mono text-[13px] font-bold text-zinc-950 shadow-[0_0_32px_rgba(255,255,255,0.12)]">
-            R
-          </div>
-          <div className="leading-tight">
-            <p className="text-[14px] font-semibold tracking-tight text-zinc-100">
-              Relay
-            </p>
-            <p className="font-mono text-[8.5px] uppercase tracking-[0.2em] text-zinc-500">
-              handover intelligence
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="hidden items-center gap-1.5 rounded-full border border-zinc-800/80 bg-zinc-900/50 px-3 py-1 font-mono text-[8.5px] uppercase tracking-[0.16em] text-zinc-500 sm:inline-flex">
-            <Lock className="size-3" aria-hidden />
-            read-only
-          </span>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 font-mono text-[8.5px] uppercase tracking-[0.16em] text-emerald-400">
-            <span className="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981]" />
-            demo workspace
-          </span>
-        </div>
+      <header className="relative z-20 mx-auto flex w-full max-w-6xl items-center px-5 py-6 sm:px-8">
+        <RelayLogo size="lg" />
       </header>
 
       <main className="relative z-10 mx-auto grid w-full max-w-6xl flex-1 items-center gap-12 px-5 pb-16 pt-4 sm:px-8 lg:grid-cols-[1.04fr_0.96fr] lg:gap-8 lg:pb-10">
@@ -223,7 +214,7 @@ export function LandingView() {
             v2 handover · T-5 days
           </p>
 
-          <h1 className="mt-6 text-balance text-[42px] font-semibold leading-[1.02] tracking-[-0.05em] text-zinc-50 sm:text-[62px] lg:text-[64px]">
+          <h1 className="mt-5 text-balance text-[42px] font-semibold leading-[1.02] tracking-[-0.05em] text-zinc-50 sm:text-[62px] lg:text-[64px]">
             Your team left.
             <br />
             <span className="bg-linear-to-r from-zinc-100 via-zinc-300 to-zinc-500 bg-clip-text text-transparent">
@@ -231,99 +222,112 @@ export function LandingView() {
             </span>
           </h1>
 
-          <p className="mt-6 max-w-lg text-[15px] leading-7 text-zinc-400 sm:text-[15.5px]">
+          <p className="mt-5 max-w-lg text-[15px] leading-7 text-zinc-400 sm:text-[15.5px]">
             Your team leaves Friday. Relay reads the Slack threads, Jira
             tickets, and GitHub commits they left behind—then surfaces every
-            contradiction before the v2 handover.
+            contradiction, gates every action by role, and seals every decision
+            in a tamper-evident receipt you can verify yourself.
           </p>
 
-          <div className="mt-8 max-w-lg rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-2 shadow-[0_30px_90px_-36px_rgba(0,0,0,0.95)] backdrop-blur">
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800/60 bg-zinc-950/70 px-4 py-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-zinc-800 bg-zinc-900 font-mono text-[10px] text-zinc-300">
-                  RL
-                </span>
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-medium text-zinc-200">
-                    relay-labs
-                  </p>
-                  <p className="font-mono text-[8.5px] uppercase tracking-[0.14em] text-zinc-500">
-                    6 repos · 18 channels · 42 tickets
-                  </p>
+          <div className="mt-7 max-w-lg">
+            <div className="rounded-3xl bg-white/[0.028] p-4 ring-1 ring-white/[0.06] backdrop-blur-xl">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-white/[0.06] font-mono text-[9px] text-zinc-300">
+                    RL
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-[12.5px] font-medium text-zinc-100">
+                      relay-labs
+                    </p>
+                    <p className="truncate font-mono text-[8px] uppercase tracking-[0.16em] text-zinc-500">
+                      <span className="sm:hidden">6 repos · 18 channels</span>
+                      <span className="hidden sm:inline">
+                        6 repos · 18 channels · 42 tickets
+                      </span>
+                    </p>
+                  </div>
                 </div>
+                <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[8px] uppercase tracking-[0.14em] text-emerald-300/80">
+                  <Check className="size-3" aria-hidden />
+                  ready
+                </span>
               </div>
-              <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[8.5px] uppercase tracking-wider text-emerald-400">
-                <Check className="size-3" aria-hidden />
-                ready
-              </span>
-            </div>
 
-            <div className="grid grid-cols-2 gap-1.5 p-1.5 pt-2 sm:grid-cols-4">
-              {SOURCES.map(({ label, detail, icon: Icon, color }) => (
-                <div
-                  key={label}
-                  className="flex items-center gap-2 rounded-lg border border-zinc-800/60 bg-zinc-950/50 px-2.5 py-2"
-                >
-                  <Icon
-                    className="size-3.5 shrink-0"
-                    style={{ color }}
-                    aria-hidden
-                  />
-                  <span className="min-w-0 leading-tight">
-                    <span className="block truncate text-[10.5px] font-medium text-zinc-300">
+              <div className="mt-4 flex items-center justify-between gap-3">
+                {SOURCES.map(({ label, icon: Icon, color }) => (
+                  <span key={label} className="flex min-w-0 items-center gap-1.5">
+                    <Icon
+                      className="size-3.5 shrink-0"
+                      style={{ color }}
+                      aria-hidden
+                    />
+                    <span className="truncate text-[10.5px] text-zinc-400">
                       {label}
                     </span>
-                    <span className="block truncate font-mono text-[8px] text-zinc-600">
-                      {detail}
-                    </span>
                   </span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
 
             <button
               type="button"
-              onClick={startIngest}
-              className="group mt-1 flex w-full items-center justify-between gap-3 rounded-xl bg-zinc-100 px-4 py-3.5 text-left text-[13px] font-semibold text-zinc-950 transition hover:bg-white active:scale-[0.995]"
+              onClick={openRepoPicker}
+              className="group mt-3 flex w-full items-center justify-between gap-3 rounded-2xl bg-zinc-50 px-5 py-4 text-left transition hover:bg-white active:scale-[0.995]"
             >
-              <span className="inline-flex items-center gap-2">
+              <span className="inline-flex items-center gap-2.5 text-[14px] font-semibold tracking-[-0.01em] text-zinc-950">
                 <ScanLine className="size-4" aria-hidden />
                 Connect workspace &amp; scan
               </span>
               <ArrowRight
-                className="size-4 transition-transform group-hover:translate-x-0.5"
+                className="size-4 text-zinc-950 transition-transform group-hover:translate-x-0.5"
                 aria-hidden
               />
             </button>
+
+            <p className="mt-2.5 truncate px-1 font-mono text-[8px] uppercase tracking-[0.14em] text-zinc-600">
+              any public repository · live github api · read-only
+            </p>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-zinc-800/60 bg-zinc-900/20 px-3 py-2 font-mono text-[8.5px] text-zinc-500">
-            <Sparkles className="size-3 text-emerald-400/80" aria-hidden />
-            <span className="uppercase tracking-[0.14em] text-zinc-400">
-              90-second judge route
-            </span>
-            <span className="text-zinc-600">
-              scan → d-003 → ⌘K → C inject → auto-triage → artifact
-            </span>
-            <span className="ml-auto hidden items-center gap-1 text-zinc-600 sm:inline-flex">
-              <kbd className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[8px] text-zinc-400">
-                ↵
-              </kbd>
-              to start
-            </span>
+          <div className="mt-2">
+            <JudgeWalkthroughTrigger variant="hero" />
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[9.5px] text-zinc-500">
-            <span className="inline-flex items-center gap-1.5">
-              <ShieldCheck className="size-3.5 text-emerald-400/80" aria-hidden />
-              no write access
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Terminal className="size-3.5" aria-hidden />4 min scan
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Braces className="size-3.5" aria-hidden />6 doubts found
-            </span>
+          <div className="mt-2 overflow-hidden rounded-xl border border-amber-500/15 bg-amber-400/[0.02]">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 font-mono text-[8.5px] text-zinc-500">
+              <Sparkles className="size-3 text-amber-300/80" aria-hidden />
+              <span className="uppercase tracking-[0.14em] text-amber-200/80">
+                90-second judge route
+              </span>
+              <span className="text-zinc-500">
+                <span className="text-emerald-400/80">D1</span> self-scan →{' '}
+                <span className="text-sky-400/80">D2</span> manager 403 →{' '}
+                <span className="text-violet-400/80">D3</span> tamper attack →
+                scorecard
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-amber-500/10 px-3 py-1.5 font-mono text-[8.5px]">
+              <span className="inline-flex items-center gap-1.5 text-emerald-300/80">
+                <ShieldCheck className="size-3" aria-hidden />
+                72/72 gates passed
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-amber-200/80">
+                <BadgeCheck className="size-3" aria-hidden />
+                3/3 deliverables live
+              </span>
+              <button
+                type="button"
+                onClick={() => setHelpOpen(true)}
+                className="ml-auto inline-flex items-center gap-1.5 uppercase tracking-[0.12em] text-zinc-500 transition hover:text-amber-100"
+              >
+                <HelpCircle className="size-3" aria-hidden />
+                Judge guide
+                <kbd className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[8px] text-zinc-400">
+                  ?
+                </kbd>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -354,6 +358,9 @@ export function LandingView() {
           </span>
         </div>
       </footer>
+
+      <GitHubIngestStudio />
+      <Shortcuts />
     </div>
   );
 }

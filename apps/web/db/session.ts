@@ -1,5 +1,6 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
+import { appendLedgerEntry } from '@/lib/crypto-ledger';
 import type { Role } from '@/lib/triage-types';
 import { getDb } from './client';
 
@@ -169,6 +170,10 @@ export function createSession(role: Role): SessionRecord {
   );
 
   appendAudit(session.id, role, 'session.create', null, `initial role: ${role}`);
+  appendLedgerEntry(session.id, 'session.create', null, {
+    role,
+    boundary: 'signed-role-sql-views',
+  });
   return session;
 }
 

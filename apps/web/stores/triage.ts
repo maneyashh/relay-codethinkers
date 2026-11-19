@@ -8,15 +8,25 @@ import type {
   BoardResponse,
   DecisionInput,
   FastForwardResponse,
+  FindingPreview,
+  GitHubIngestResponse,
+  IngestionSummary,
+  IntegrationDispatchResponse,
+  IntegrationListResponse,
+  IntegrationRecord,
+  IntegrationTarget,
+  ReceiptResponse,
   SignalInput,
   SignalResponse,
   SynthesisResult,
   TriageBoard,
+  WebhookResponse,
 } from '@/lib/api-types';
 import type {
   AppView,
   Doubt,
   Evidence,
+  FocusMode,
   Resolution,
   Reward,
   Role,
@@ -33,13 +43,22 @@ export type {
   Evidence,
   EvidencePolarity,
   EvidenceSource,
+  FocusMode,
   Resolution,
   Reward,
   Role,
   Severity,
   VerificationState,
 } from '@/lib/triage-types';
-export type { SynthesisResult } from '@/lib/api-types';
+export type {
+  FindingPreview,
+  IngestionSummary,
+  IntegrationRecord,
+  IntegrationTarget,
+  ReceiptResponse,
+  SynthesisResult,
+  WebhookResponse,
+} from '@/lib/api-types';
 export { ROLE_LABEL } from '@/lib/triage-types';
 
 /**
@@ -192,12 +211,37 @@ interface TriageState {
   /** Evidence node requested by Ask Relay, a citation chip or the handover. */
   focusEvidenceId: string | null;
 
+  /** Guided Focus (one contradiction at a time) vs Full War-Room. */
+  focusMode: FocusMode;
+  /** Last live GitHub ingestion for this session, with finding previews. */
+  lastIngest: {
+    ingestion: IngestionSummary;
+    findings: FindingPreview[];
+  } | null;
+  webhook: WebhookResponse | null;
+  integrations: IntegrationRecord[];
+  receipt: ReceiptResponse | null;
+
   setView: (view: AppView) => void;
+  setFocusMode: (mode: FocusMode) => void;
   startIngest: () => void;
   loadBoard: () => Promise<void>;
   finishIngest: () => Promise<void>;
   select: (id: string) => void;
   setRole: (role: Role) => Promise<void>;
+  ingestGithub: (input: {
+    repo?: string;
+    presetId?: string;
+  }) => Promise<GitHubIngestResponse | null>;
+  simulateWebhook: (
+    event: 'push' | 'pull_request',
+    presetId?: string,
+  ) => Promise<WebhookResponse | null>;
+  loadIntegrations: () => Promise<IntegrationListResponse | null>;
+  dispatchIntegration: (
+    target: IntegrationTarget,
+  ) => Promise<IntegrationDispatchResponse | null>;
+  loadReceipt: () => Promise<ReceiptResponse | null>;
   move: (dir: 1 | -1) => void;
   resolve: (
     resolutionId: Resolution['id'],
@@ -233,8 +277,15 @@ export const useTriage = create<TriageState>((set, get) => ({
   pendingAction: null,
   error: null,
   focusEvidenceId: null,
+  focusMode: 'guided',
+  lastIngest: null,
+  webhook: null,
+  integrations: [],
+  receipt: null,
 
   setView: (view) => set({ view }),
+
+  setFocusMode: (focusMode) => set({ focusMode }),
 
   startIngest: () =>
     set({
@@ -321,6 +372,137 @@ export const useTriage = create<TriageState>((set, get) => ({
       Math.max(0, (index === -1 ? 0 : index) + dir),
     );
     set({ selectedId: doubts[next].id, focusEvidenceId: null });
+  },
+
+  ingestGithub: async (input) => {
+    if (get().pendingAction) return null;
+    set({ pendingAction: 'github-ingest', error: null, lastReward: null });
+    try {
+      const data = await requestJson<GitHubIngestResponse>(
+        '/api/github/ingest',
+        { method: 'POST', body: JSON.stringify(input) },
+      );
+      set((state) => ({
+        ...boardPatch(data.board, state.selectedId),
+        pendingAction: null,
+        lastIngest: { ingestion: data.ingestion, findings: data.findings },
+      }));
+      return data;
+    } catch (error) {
+      set({
+        pendingAction: null,
+        error:
+          error instanceof Error ? error.message : 'Unable to ingest repository',
+      });
+      return null;
+    }
+  },
+
+  simulateWebhook: async (event, presetId) => {
+    if (get().pendingAction) return null;
+    set({ pendingAction: `webhook:${event}`, error: null });
+    try {
+      const data = await requestJson<WebhookResponse>('/api/github/webhook', {
+        method: 'POST',
+        body: JSON.stringify({ event, presetId }),
+      });
+      set((state) => ({
+        ...boardPatch(data.board, state.selectedId),
+        pendingAction: null,
+        webhook: data,
+      }));
+      return data;
+    } catch (error) {
+      set({
+        pendingAction: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Unable to verify webhook delivery',
+      });
+      return null;
+    }
+  },
+
+  loadIntegrations: async () => {
+    try {
+      const data = await requestJson<IntegrationListResponse>(
+        '/api/integrations',
+      );
+      set({ integrations: data.integrations });
+      return data;
+    } catch (error) {
+      set({
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Unable to load integrations',
+      });
+      return null;
+    }
+  },
+
+  dispatchIntegration: async (target) => {
+    if (get().pendingAction) return null;
+    set({ pendingAction: `dispatch:${target}`, error: null });
+    try {
+      const data = await requestJson<IntegrationDispatchResponse>(
+        target === 'github'
+          ? '/api/integrations/github-pr'
+          : '/api/integrations/notion-sync',
+        { method: 'POST', body: '{}' },
+      );
+      set((state) => ({
+        pendingAction: null,
+        integrations: [
+          data.integration,
+          ...state.integrations.filter(
+            (item) => item.id !== data.integration.id,
+          ),
+        ],
+        meta: state.meta
+          ? {
+              ...state.meta,
+              integrations: {
+                total: state.meta.integrations.total + 1,
+                github:
+                  state.meta.integrations.github +
+                  (target === 'github' ? 1 : 0),
+                notion:
+                  state.meta.integrations.notion +
+                  (target === 'notion' ? 1 : 0),
+                lastMode: data.integration.mode,
+              },
+            }
+          : state.meta,
+      }));
+      return data;
+    } catch (error) {
+      set({
+        pendingAction: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Unable to dispatch integration',
+      });
+      return null;
+    }
+  },
+
+  loadReceipt: async () => {
+    try {
+      const data = await requestJson<ReceiptResponse>(
+        '/api/security/receipt',
+      );
+      set({ receipt: data });
+      return data;
+    } catch (error) {
+      set({
+        error:
+          error instanceof Error ? error.message : 'Unable to load receipt',
+      });
+      return null;
+    }
   },
 
   resolve: async (resolutionId, doubtId, decision) => {
@@ -505,6 +687,11 @@ export const useTriage = create<TriageState>((set, get) => ({
         meta: null,
         pendingAction: null,
         error: null,
+        lastIngest: null,
+        webhook: null,
+        integrations: [],
+        receipt: null,
+        focusMode: 'guided',
       });
     } catch (error) {
       set({
